@@ -10,7 +10,15 @@ const ModelSelector = ({ onSelect }) => {
       try {
         setLoading(true); // Set loading state to true before sending request
         const response = await axios.get("/model");
-        setModels(response.data);
+
+        if (Array.isArray(response.data)) {
+          setModels(response.data);
+        } else if (typeof response.data === 'object') {
+          setModels(Object.keys(response.data));
+        } else {
+          console.error("Invalid data format received from backend:", 
+response.data);
+        }
       } catch (error) {
         console.error("Error fetching models:", error);
       } finally {
