@@ -23,8 +23,7 @@ class ProjectManager {
       const rawData = fs.readFileSync(this.metadataFile);
       return JSON.parse(rawData);
     } else {
-      throw new Error(`Metadata not found for project: 
-${this.projectPath}`);
+      throw new Error(`Metadata not found for project: ${this.projectPath}`);
     }
   }
 
