@@ -3,14 +3,35 @@ import axios from "axios";
 
 const ModelSelector = ({ onSelect }) => {
   const [models, setModels] = useState([]);
+  const [loading, setLoading] = useState(false); // Add loading state
 
   useEffect(() => {
-    // Fetch available models from backend and update state
-    axios.get("/model").then((response) => setModels(response.data));
+    const fetchModels = async () => {
+      try {
+        setLoading(true); // Set loading state to true before sending request
+        const response = await axios.get("/model");
+        setModels(response.data);
+      } catch (error) {
+        console.error("Error fetching models:", error);
+      } finally {
+        setLoading(false); // Set loading state to false after receiving response or catching error
+      }
+    };
+
+    fetchModels();
   }, []);
 
+  const handleSelect = async (modelName) => {
+    try {
+      await axios.post("/model/switch", { modelName }); // Call backend for model switching
+      onSelect(modelName);
+    } catch (error) {
+      console.error("Error switching models:", error);
+    }
+  };
+
   return (
-    <select onChange={(e) => onSelect(e.target.value)}>
+    <select onChange={(e) => handleSelect(e.target.value)} disabled={loading}>
       {models.map((model) => (
         <option key={model} value={model}>
           {model}
