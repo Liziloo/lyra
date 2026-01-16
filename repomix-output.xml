@@ -42,15 +42,13 @@ The content is organized as follows:
 <directory_structure>
 backend/
   routes/
-    chat.js
-    model.js
-    ollamaClient.js
-    session.js
-  modelSwitcher.js
-  package.json
-  projectManager.js
-  server.js
-  sessionManager.js
+    chat.py
+    model.py
+    session.py
+  main.py
+  ollama_client.py
+  requirements.txt
+  session_manager.py
 frontend/
   public/
     vite.svg
@@ -69,6 +67,16 @@ frontend/
   package.json
   README.md
   vite.config.js
+legacy/
+  routes/
+    chat.js
+    model.js
+    ollamaClient.js
+    session.js
+  modelSwitcher.js
+  projectManager.js
+  server.js
+  sessionManager.js
 models/
   lyra-code-lyra.modelfile
   lyra-code.modelfile
@@ -81,7 +89,222 @@ SPEC.md
 <files>
 This section contains the contents of the repository's files.
 
-<file path="backend/routes/chat.js">
+<file path="backend/routes/chat.py">
+from fastapi import APIRouter, Body
+from fastapi.responses import StreamingResponse
+from ollama_client import OllamaClient
+from pydantic import BaseModel
+
+router = APIRouter()
+
+class ChatRequest(BaseModel):
+    input: str
+    model: str
+    projectName: str | None = None
+
+@router.post("/")
+async def chat_endpoint(request: ChatRequest):
+    # This returns a real-time stream of tokens to the frontend
+    return StreamingResponse(
+        OllamaClient.get_response_stream(request.model, request.input),
+        media_type="text/event-stream"
+    )
+</file>
+
+<file path="backend/routes/model.py">
+import json
+from pathlib import Path
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from ollama_client import OllamaClient
+
+router = APIRouter()
+
+# Path to your models registry
+REGISTRY_PATH = Path(__file__).parent.parent.parent / "models" / "registry.json"
+
+class ModelSwitchRequest(BaseModel):
+    modelName: str
+
+@router.get("/")
+async def list_available_models():
+    """Fetches both Ollama's installed models and Lyra's registry."""
+    try:
+        # Get installed models from local Ollama service
+        ollama_models = await OllamaClient.list_models()
+        
+        # Load local registry if it exists
+        registry = {}
+        if REGISTRY_PATH.exists():
+            registry = json.loads(REGISTRY_PATH.read_text())
+
+        return {
+            "success": True, 
+            "ollama_tags": ollama_models,
+            "registry": registry
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/switch")
+async def switch_model(request: ModelSwitchRequest):
+    """
+    In a more advanced setup, this would trigger model pre-loading
+    or session archiving. For now, it validates the request.
+    """
+    # Logic: Verify model exists in Ollama
+    all_models = await OllamaClient.list_models()
+    model_names = [m.get("name") for m in all_models]
+    
+    # Check if the requested model (or its base) is available
+    if any(request.modelName in name for name in model_names):
+        return {"success": True, "message": f"Switched to {request.modelName}"}
+    
+    raise HTTPException(status_code=400, detail="Model not found in local Ollama instance")
+</file>
+
+<file path="backend/routes/session.py">
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+from session_manager import SessionManager
+from typing import Dict, Any
+
+router = APIRouter()
+
+class SessionSaveRequest(BaseModel):
+    model_name: str
+    session_data: Dict[str, Any]
+
+@router.get("/")
+async def get_current_session(model_name: str = Query(..., alias="modelName")):
+    """Retrieves the current active session for a specific model."""
+    try:
+        manager = SessionManager(model_name)
+        data = manager.load_session()
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load session: {str(e)}")
+
+@router.post("/save")
+async def save_session(request: SessionSaveRequest):
+    """Saves the current conversation state."""
+    try:
+        manager = SessionManager(request.model_name)
+        manager.save_session(request.session_data)
+        return {"success": True, "message": "Session saved successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/archive")
+async def archive_session(model_name: str = Query(...)):
+    """Archives the current session and starts a fresh one."""
+    try:
+        manager = SessionManager(model_name)
+        manager.archive_session()
+        return {"success": True, "message": "Session archived and cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+</file>
+
+<file path="backend/main.py">
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from routes import chat, session, model
+
+app = FastAPI(title="Lyra API", version="2.0.0")
+
+# CORS configuration for Vite (usually port 5173 or 3000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # For local dev, restrict in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include Routers
+app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+app.include_router(session.router, prefix="/session", tags=["Session"])
+app.include_router(model.router, prefix="/model", tags=["Model"])
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=3001)
+</file>
+
+<file path="backend/ollama_client.py">
+import httpx
+import json
+
+OLLAMA_URL = "http://localhost:11434/api"
+
+class OllamaClient:
+    @staticmethod
+    async def get_response_stream(model: str, prompt: str, context: list = []):
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "context": context,
+            "stream": True
+        }
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("POST", f"{OLLAMA_URL}/generate", json=payload) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        data = json.loads(line)
+                        yield f"data: {json.dumps(data)}\n\n"
+                        if data.get("done"):
+                            break
+
+    @staticmethod
+    async def list_models():
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.get(f"{OLLAMA_URL}/tags", timeout=5.0)
+                resp.raise_for_status()
+                return resp.json().get("models", [])
+            except httpx.RequestError:
+                return [] # Return empty list if Ollama is offline
+</file>
+
+<file path="backend/requirements.txt">
+fastapi
+uvicorn
+httpx
+pydantic
+python-multipart
+</file>
+
+<file path="backend/session_manager.py">
+import os
+import json
+import time
+from pathlib import Path
+
+class SessionManager:
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.session_dir = Path(__file__).parent.parent / "sessions" / model_name
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.current_file = self.session_dir / "current_session.json"
+
+    def load_session(self):
+        if self.current_file.exists():
+            return json.loads(self.current_file.read_text())
+        return {"conversation": []}
+
+    def save_session(self, data):
+        self.current_file.write_text(json.dumps(data, indent=2))
+
+    def archive_session(self):
+        if self.current_file.exists():
+            timestamp = int(time.time())
+            archive_path = self.session_dir / f"session_{timestamp}.json"
+            os.rename(self.current_file, archive_path)
+            self.save_session({"conversation": []})
+</file>
+
+<file path="legacy/routes/chat.js">
 const express = require('express');
 const router = express.Router();
 const ollamaClient = require('../ollamaClient');
@@ -105,7 +328,70 @@ router.post('/', async (req, res) => {
 module.exports = router;
 </file>
 
-<file path="backend/routes/ollamaClient.js">
+<file path="legacy/routes/model.js">
+const express = require("express");
+const router = express.Router();
+const fs = require("fs").promises;
+const path = require("path");
+const modelSwitcher = require("../modelSwitcher");
+
+// Read the models registry file
+async function readModelsRegistry() {
+  const registryPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    "models",
+    "registry.json"
+  );
+  try {
+    const data = await fs.readFile(registryPath, "utf8");
+    return JSON.parse(data);
+  } catch (error) {
+    console.error("Error reading models registry:", error);
+    throw new Error("Failed to read models registry");
+  }
+}
+
+router.get("/", async (req, res) => {
+  try {
+    // Read the models registry and send available model names back to UI
+    const modelsRegistry = await readModelsRegistry();
+    res.json({ success: true, data: Object.keys(modelsRegistry) });
+  } catch (error) {
+    console.error("Error in get models route:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+router.post("/switch", async (req, res) => {
+  // Extract new model name from request body
+  const { modelName } = req.body;
+
+  try {
+    // Read the models registry to validate the requested model
+    const modelsRegistry = await readModelsRegistry();
+    if (!modelsRegistry[modelName]) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid model name" });
+    }
+
+    // Switch to the new model
+    await modelSwitcher.switchModel(modelName);
+
+    // Send success response back to UI
+    res.json({ success: true, message: "Model switched successfully" });
+  } catch (error) {
+    console.error("Error in switch model route:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+module.exports = router;
+</file>
+
+<file path="legacy/routes/ollamaClient.js">
 const axios = require('axios');
 
 const OLLAMA_API_URL = 'http://localhost:11434/api'; // Update with your Ollama server URL
@@ -137,7 +423,7 @@ payload);
 module.exports = { listModels, generateResponse };
 </file>
 
-<file path="backend/routes/session.js">
+<file path="legacy/routes/session.js">
 const express = require('express');
 const router = express.Router();
 const sessionManager = require('../sessionManager');
@@ -170,7 +456,7 @@ router.post('/save', (req, res) => {
 module.exports = router;
 </file>
 
-<file path="backend/modelSwitcher.js">
+<file path="legacy/modelSwitcher.js">
 const fs = require("fs");
 const path = require("path");
 const SessionManager = require("./sessionManager");
@@ -239,7 +525,77 @@ ${modelName}`);
 module.exports = ModelSwitcher;
 </file>
 
-<file path="backend/server.js">
+<file path="legacy/projectManager.js">
+const fs = require("fs");
+const path = require("path");
+const sqlite3 = require("sqlite3").verbose();
+
+class ProjectManager {
+  constructor(projectName, modelName) {
+    this.projectPath = path.join(__dirname, "..", "projects", projectName);
+    this.metadataFile = path.join(this.projectPath, "metadata.json");
+    this.contextChunksPath = path.join(this.projectPath, "context_chunks");
+    this.embeddingsDb = new sqlite3.Database(
+      path.join(
+        __dirname,
+        "..",
+        "embeddings",
+        `${projectName}_${modelName}.sqlite`
+      )
+    );
+  }
+
+  // Read project metadata from JSON file
+  readMetadata() {
+    if (fs.existsSync(this.metadataFile)) {
+      const rawData = fs.readFileSync(this.metadataFile);
+      return JSON.parse(rawData);
+    } else {
+      throw new Error(`Metadata not found for project: ${this.projectPath}`);
+    }
+  }
+
+  // Read file content from the project code directory
+  readFile(fileName) {
+    const filePath = path.join(this.projectPath, "code", fileName);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf-8");
+    } else {
+      throw new Error(`File not found: ${fileName}`);
+    }
+  }
+
+  // Write content to a file in the project code directory
+  writeFile(fileName, content) {
+    const filePath = path.join(this.projectPath, "code", fileName);
+    fs.writeFileSync(filePath, content);
+  }
+
+  // Read context chunks for RAG from the project directory
+  readContextChunks() {
+    return fs.readdirSync(this.contextChunksPath).map((chunkFileName) => {
+      const chunkFilePath = path.join(this.contextChunksPath, chunkFileName);
+      return fs.readFileSync(chunkFilePath, "utf-8");
+    });
+  }
+
+  // Update embeddings cache for the project and model in SQLite
+  database;
+  updateEmbeddingsCache(embeddings) {
+    const stmt = this.embeddingsDb.prepare(
+      "INSERT OR REPLACE INTO embeddings (id, vector) VALUES (?, ?)"
+    );
+    embeddings.forEach(({ id, vector }) => {
+      stmt.run(id, JSON.stringify(vector));
+    });
+    stmt.finalize();
+  }
+}
+
+module.exports = ProjectManager;
+</file>
+
+<file path="legacy/server.js">
 const express = require("express");
 const app = express();
 app.use(express.json());
@@ -261,7 +617,7 @@ app.listen(PORT, () => {
 });
 </file>
 
-<file path="backend/sessionManager.js">
+<file path="legacy/sessionManager.js">
 const fs = require("fs");
 const path = require("path");
 
@@ -695,10 +1051,6 @@ PARAMETER top_k 40
 PARAMETER repeat_penalty 1.1
 </file>
 
-<file path=".gitignore">
-backend/node_modules
-</file>
-
 <file path="LICENSE.md">
 # MIT License
 
@@ -725,139 +1077,6 @@ SOFTWARE.
 
 <file path="README.md">
 
-</file>
-
-<file path="backend/routes/model.js">
-const express = require("express");
-const router = express.Router();
-const fs = require("fs").promises;
-const path = require("path");
-const modelSwitcher = require("../modelSwitcher");
-
-// Read the models registry file
-async function readModelsRegistry() {
-  const registryPath = path.join(
-    __dirname,
-    "..",
-    "..",
-    "models",
-    "registry.json"
-  );
-  try {
-    const data = await fs.readFile(registryPath, "utf8");
-    return JSON.parse(data);
-  } catch (error) {
-    console.error("Error reading models registry:", error);
-    throw new Error("Failed to read models registry");
-  }
-}
-
-router.get("/", async (req, res) => {
-  try {
-    // Read the models registry and send available model names back to UI
-    const modelsRegistry = await readModelsRegistry();
-    res.json({ success: true, data: Object.keys(modelsRegistry) });
-  } catch (error) {
-    console.error("Error in get models route:", error);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-router.post("/switch", async (req, res) => {
-  // Extract new model name from request body
-  const { modelName } = req.body;
-
-  try {
-    // Read the models registry to validate the requested model
-    const modelsRegistry = await readModelsRegistry();
-    if (!modelsRegistry[modelName]) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid model name" });
-    }
-
-    // Switch to the new model
-    await modelSwitcher.switchModel(modelName);
-
-    // Send success response back to UI
-    res.json({ success: true, message: "Model switched successfully" });
-  } catch (error) {
-    console.error("Error in switch model route:", error);
-    res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-module.exports = router;
-</file>
-
-<file path="backend/projectManager.js">
-const fs = require("fs");
-const path = require("path");
-const sqlite3 = require("sqlite3").verbose();
-
-class ProjectManager {
-  constructor(projectName, modelName) {
-    this.projectPath = path.join(__dirname, "..", "projects", projectName);
-    this.metadataFile = path.join(this.projectPath, "metadata.json");
-    this.contextChunksPath = path.join(this.projectPath, "context_chunks");
-    this.embeddingsDb = new sqlite3.Database(
-      path.join(
-        __dirname,
-        "..",
-        "embeddings",
-        `${projectName}_${modelName}.sqlite`
-      )
-    );
-  }
-
-  // Read project metadata from JSON file
-  readMetadata() {
-    if (fs.existsSync(this.metadataFile)) {
-      const rawData = fs.readFileSync(this.metadataFile);
-      return JSON.parse(rawData);
-    } else {
-      throw new Error(`Metadata not found for project: ${this.projectPath}`);
-    }
-  }
-
-  // Read file content from the project code directory
-  readFile(fileName) {
-    const filePath = path.join(this.projectPath, "code", fileName);
-    if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, "utf-8");
-    } else {
-      throw new Error(`File not found: ${fileName}`);
-    }
-  }
-
-  // Write content to a file in the project code directory
-  writeFile(fileName, content) {
-    const filePath = path.join(this.projectPath, "code", fileName);
-    fs.writeFileSync(filePath, content);
-  }
-
-  // Read context chunks for RAG from the project directory
-  readContextChunks() {
-    return fs.readdirSync(this.contextChunksPath).map((chunkFileName) => {
-      const chunkFilePath = path.join(this.contextChunksPath, chunkFileName);
-      return fs.readFileSync(chunkFilePath, "utf-8");
-    });
-  }
-
-  // Update embeddings cache for the project and model in SQLite
-  database;
-  updateEmbeddingsCache(embeddings) {
-    const stmt = this.embeddingsDb.prepare(
-      "INSERT OR REPLACE INTO embeddings (id, vector) VALUES (?, ?)"
-    );
-    embeddings.forEach(({ id, vector }) => {
-      stmt.run(id, JSON.stringify(vector));
-    });
-    stmt.finalize();
-  }
-}
-
-module.exports = ProjectManager;
 </file>
 
 <file path="frontend/package.json">
@@ -889,6 +1108,225 @@ module.exports = ProjectManager;
     "vite": "^7.2.4"
   }
 }
+</file>
+
+<file path=".gitignore">
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#   Usually these files are written by a python script from a template
+#   before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the code is
+#   intended to run in multiple environments; otherwise, check them in:
+# .python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+# Pipfile.lock
+
+# UV
+#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+# uv.lock
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+# poetry.lock
+# poetry.toml
+
+# pdm
+#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
+#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
+# pdm.lock
+# pdm.toml
+.pdm-python
+.pdm-build/
+
+# pixi
+#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
+# pixi.lock
+#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
+#   in the .venv directory. It is recommended not to include this directory in version control.
+.pixi
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# Redis
+*.rdb
+*.aof
+*.pid
+
+# RabbitMQ
+mnesia/
+rabbitmq/
+rabbitmq-data/
+
+# ActiveMQ
+activemq-data/
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
+#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
+#   and can be added to the global gitignore or merged into this file.  For a more nuclear
+#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
+# .idea/
+
+# Abstra
+#   Abstra is an AI-powered process automation framework.
+#   Ignore directories containing user credentials, local state, and settings.
+#   Learn more at https://abstra.io/docs
+.abstra/
+
+# Visual Studio Code
+#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
+#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   you could uncomment the following to ignore the entire vscode folder
+# .vscode/
+
+# Ruff stuff:
+.ruff_cache/
+
+# PyPI configuration file
+.pypirc
+
+# Marimo
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+# Streamlit
+.streamlit/secrets.toml
 </file>
 
 <file path="frontend/src/components/ChatBox.jsx">
@@ -1148,26 +1586,6 @@ tags:
   - Thermaltake Toughpower GF1 (2024) 850 W 80+ Gold Certified Fully Modular ATX Power Supply
 - **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
 - **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
-</file>
-
-<file path="backend/package.json">
-{
-  "name": "lyra",
-  "version": "1.0.0",
-  "description": "",
-  "license": "MIT",
-  "author": "Liz Casler Loomans",
-  "type": "commonjs",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "dependencies": {
-    "express": "^5.2.1",
-    "fs": "^0.0.1-security",
-    "path": "^0.12.7"
-  }
-}
 </file>
 
 </files>
