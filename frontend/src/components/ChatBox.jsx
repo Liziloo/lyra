@@ -1,39 +1,83 @@
+// frontend/src/components/ChatBox.jsx
 import React, { useState } from "react";
-import axios from "axios";
 
-const ChatBox = ({ model, projectName, setInput }) => {
+const ChatBox = ({ model, projectName }) => {
   const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false); // Add loading state
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const sendMessage = async () => {
+    if (!input) return;
+    const userMsg = { text: input, isUser: true };
+    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
+
+    const currentInput = input;
+    setInput("");
+
     try {
-      setLoading(true); // Set loading state to true before sending request
-      const response = await axios.post("/chat", { input: setInput, 
-model, projectName });
-      setMessages([
-        ...messages,
-        { text: setInput, isUser: true },
-        {
-          text: response.data.output,
-          isUser: false,
-        },
-      ]);
-      setInput(""); // Clear the input field after sending the message
+      const response = await fetch("http://localhost:3001/chat/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: currentInput, model, projectName }),
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantText = "";
+
+      // Add placeholder for assistant
+      setMessages((prev) => [...prev, { text: "", isUser: false }]);
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = JSON.parse(line.replace("data: ", ""));
+            // Ollama uses data.response, OpenRouter uses data.choices[0].delta.content
+            const token =
+              data.response || data.choices?.[0]?.delta?.content || "";
+            assistantText += token;
+
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[updated.length - 1].text = assistantText;
+              return updated;
+            });
+          }
+        }
+      }
     } catch (error) {
-      console.error("Error sending message:", error);
+      console.error("Stream error:", error);
     } finally {
-      setLoading(false); // Set loading state to false after receiving response or catching error
+      setLoading(false);
     }
   };
 
   return (
-    <div className="chat-box">
-      {/* Render messages here */}
-      <input value={setInput} onChange={(e) => setInput(e.target.value)} 
-/>
-      <button onClick={sendMessage} disabled={loading}>
-        {loading ? "Sending..." : "Send"}
-      </button>
+    <div className="chat-container">
+      <div className="messages">
+        {messages.map((m, i) => (
+          <div key={i} className={`bubble ${m.isUser ? "user" : "ai"}`}>
+            {m.text}
+          </div>
+        ))}
+      </div>
+      <div className="input-area">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+        />
+        <button onClick={sendMessage} disabled={loading}>
+          Send
+        </button>
+      </div>
     </div>
   );
 };

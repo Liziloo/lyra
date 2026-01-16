@@ -1,5 +1,17 @@
+# Web Framework
 fastapi
-uvicorn
-httpx
-pydantic
-python-multipart
+uvicorn[standard]  # 'standard' includes uvloop for high performance on Linux/AMD
+
+# HTTP & API
+httpx              # Required for streaming calls to Ollama and OpenRouter
+pydantic           # Data validation
+python-multipart   # Form data support
+
+# Security & Config
+python-dotenv      # To manage OPENROUTER_API_KEY from a .env file
+
+# SPEC Section 2: File Watching (Obsidian Vault Integration)
+watchdog           # Monitors project and vault directories for changes
+
+# SPEC Section 6: Scaffolding & Parsing (Optional but recommended)
+markdown           # To parse Obsidian notes for context injection
