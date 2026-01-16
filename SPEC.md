@@ -11,6 +11,7 @@ tags:
   - User can toggle between them in the UI. 
   - **OpenRouter Logic:** Implement a `POST` wrapper that sends requests to `https://openrouter.ai/api/v1/chat/completions` using the user's stored API key.
 - **Ollama "Web Search" API:** - When the "Research" toggle is active, the app uses Ollama's native `/api/web_search` (v2025/2026 feature) to fetch facts before generating a response.
+  - - Requires `OLLAMA_API_KEY` field in UI/Backend for cloud-augmented grounding.
 
 ## 2. Integrated Context Systems
 - **Obsidian "Vault" Engine:**
@@ -47,7 +48,24 @@ tags:
 
 ---
 
-## 6. Implementation Prompt for Gemini 3 Flash
+## 6. Hardware Architecture (AMD ROCm)
+- **Primary Engine:** Ollama v0.14+ utilizing ROCm for RX 7800 XT (16GB VRAM).
+- **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
+- **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
+
+---
+
+## 7. Executive Function & Proton Integration
+- **Proton Bridge Link:** - Use `node-imap` and `nodemailer` to connect to `127.0.0.1` (local Proton Bridge ports).
+- **Auto-Task Extraction:** - AI logic to convert "Rants" or "Calendar Events" into micro-tasks.
+  - Automatically schedule these micro-tasks into the user's Calendar.
+- **Proactive Check-ins:** - Use Pop!_OS system notifications for "Body Doubling" prompts.
+  - If a Calendar event is approaching, the AI suggests prep-tasks 30 mins prior.
+- **The "Rant" Interface:** A dedicated high-speed input for unstructured brain-dumps.
+
+---
+
+## Implementation Prompt for Gemini 3 Flash
 **"I am providing my current codebase and the Final Build Spec. 
 
 Task: Refactor my existing code to implement the Obsidian Vault scanner, the OpenRouter API integration, and the Ollama Web Search features immediately. 
