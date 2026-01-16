@@ -11,63 +11,70 @@ tags:
   - User can toggle between them in the UI. 
   - **OpenRouter Logic:** Implement a `POST` wrapper that sends requests to `https://openrouter.ai/api/v1/chat/completions` using the user's stored API key.
 - **Ollama "Web Search" API:** - When the "Research" toggle is active, the app uses Ollama's native `/api/web_search` (v2025/2026 feature) to fetch facts before generating a response.
-  - - Requires `OLLAMA_API_KEY` field in UI/Backend for cloud-augmented grounding.
+ - Requires `OLLAMA_API_KEY` field in UI/Backend for cloud-augmented grounding.
 
 ## 2. Integrated Context Systems
-- **Obsidian "Vault" Engine:**
-  - **Functionality:** A background service that scans a specified local Linux directory (the Obsidian Vault).
-  - **Search:** Implement a simple "Keyword Extract" that reads the last 5-10 modified `.md` files or files matching words in the current prompt to provide context.
+- **Obsidian Vault:**
+  - **Service:** Recursive file-system watcher (Linux-based) on a user-defined directory.      
+  - **Context Injection:** On every prompt, search the last 10 `.md` files modified or perform a vector search (if indexed) to inject relevant genealogy or coding notes into the context window.
 - **Genealogy-Specific "Research Mode":**
   - A specialized system prompt that instructs the AI to prioritize "Source Citations" and "Negative Evidence" (noting where information was *not* found).
+- **Snapshot/Recovery:**
+  - **State Capture:** Hook to save current active file paths, terminal working directories, and line numbers.     
+  - **Resumption:** AI generates a 3-bullet summary of the "Active Logic State" to eliminate re-orientation friction.
 
-## 3. VS Code & LAN Integration (The "Workflow" Layer) 
-- **OpenAI-Compatible Endpoint (New):** - Implement a route `/v1/chat/completions` in the backend. 
-- **Purpose:** This makes your app "look" like an OpenAI server to VS Code. You can point the **Continue** or **Cline** extensions to `http://localhost:port/v1` and use your Lyra "Brain" (with Obsidian context) directly in the editor. - **LAN Multi-User Support:** - Listen on `0.0.0.0` for multi-workstation access. - Isolated storage: `backend/data/{username}/`.
+## 3. VS Code & LAN Integration
+- **OpenAI-Compatible Endpoint:** - Implement a route `/v1/chat/completions` in the backend to enable integration with VSCode AI extensions. 
+- **LAN Multi-User Support:** - Listen on `0.0.0.0` for multi-workstation access. 
+  - Isolated storage: `backend/data/{username}/`.
 
 ---
 
-## 4. Aesthetic & Ergonomic Contract (LOCKED)
+## 4. Aesthetic & Ergonomic
 
 | Variable | HEX | Usage |
 | :--- | :--- | :--- |
 | **--bright-snow** | `#f8f9faff` | Primary content surface (high readability). |
 | **--graphite** | `#333333ff` | Primary text. |
-| **--brilliant-rose** | `#ff3aaeff` | **Lining only.** Input borders, active glows. Never text background. |
+| **--brilliant-rose** | `#ff3aaeff` | Input borders, dividers, active glows. Never text background. |
 | **--saffron** | `#e8b923ff` | **Decorative Gold.** Thick accent lines (2px+), section dividers. |
 
-- **UI Physics:** - **Bubbles:** Light-filled with black text. Alignment (Left/Right) conveys role.
+- **UI Physics:** 
+  - **Bubbles:** Light-filled with black text. Alignment (Left/Right) conveys role.
   - **Metadata:** Timestamps are greyed and visually subordinate.
   - **Not a dark theme:** Clean, light content planes with dark/neutral framing.
 
+## 5. Accuracy & Anti-Drift Protocols
+- **Verification Loop:** Every "Complex" request triggers a self-correction pass before being displayed in the UI. Mandatory 2-pass verification (Worker + Auditor) for all complex prompts.
+- **Reference-First Generation:** AI must list the "Sources Found" (from Obsidian or Web) at the top of the response before providing the answer.
+- **The "Multi-Pass" Check:** For high-intellect tasks, the app uses "Best-of-N" sampling—it generates 3 small logic paths and the backend "Aggregator" picks the most consistent one.
+- **Context Pinning:** Key facts (e.g., "Grandfather's birth year: 1892") are "pinned" to the system prompt so the AI cannot contradict them later in the thread.
+
 ---
 
-## 5. "Build It Now" Feature Checklist
+## 6. Additional Features
 1. **Model Switcher:** Pulls local models from Ollama AND fetches a curated list from OpenRouter (e.g., Claude 3.5 Sonnet, DeepSeek V3).
 2. **Auto-Summary:** When a thread reaches 10 messages, the AI summarizes the "Status" to save context tokens.
 3. **Markdown Export:** A "Save to Vault" button that formats the current conversation and saves it directly into the user's Obsidian folder.
+4. **Scaffolding Engine:**
+  - Dedicated endpoint/prompt for generating full-stack project structures, directory trees, and `Makefile` or `CMakeLists.txt` instantly to bypass manual setup.
+5. **Genealogy Research Mode:**  
+  - Automated source parsing. User provides raw text; AI extracts names, dates, and locations into formatted citations (GEDCOM or Markdown) in the background.
+6. **DIY Parts Agent:** 
+  - Background scraping for component specs/pricing when DIY project keywords are detected.
+7. **Proton Bridge Integration:**  
+  - Connect to `127.0.0.1` via `node-imap`.      
+  - **Task Extraction:** AI scans incoming emails for action items and automatically populates the micro-task list.
 
 ---
 
-## 6. Hardware Architecture (AMD ROCm)
-- **Primary Engine:** Ollama v0.14+ utilizing ROCm for RX 7800 XT (16GB VRAM).
+## 7. Hardware Architecture (AMD ROCm)
+- **Primary Engine:** Ollama v0.14+ hosted on custom Linux desktop with following specs:
+  - AMD Ryzen 7 9800X3D 4.7 GHz 8-Core Processor
+  - Sapphire PULSE Radeon RX 7800 XT 16 GB Video Card
+  - MSI B850 GAMING PLUS WIFI ATX AM5 Motherboard
+  - TEAMGROUP T-Create Expert 32 GB (2 x 16 GB) DDR5-6000 CL30 Memory
+  - TEAMGROUP MP44L 2 TB M.2-2280 PCIe 4.0 X4 NVME Solid State Drive
+  - Thermaltake Toughpower GF1 (2024) 850 W 80+ Gold Certified Fully Modular ATX Power Supply
 - **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
 - **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
-
----
-
-## 7. Executive Function & Proton Integration
-- **Proton Bridge Link:** - Use `node-imap` and `nodemailer` to connect to `127.0.0.1` (local Proton Bridge ports).
-- **Auto-Task Extraction:** - AI logic to convert "Rants" or "Calendar Events" into micro-tasks.
-  - Automatically schedule these micro-tasks into the user's Calendar.
-- **Proactive Check-ins:** - Use Pop!_OS system notifications for "Body Doubling" prompts.
-  - If a Calendar event is approaching, the AI suggests prep-tasks 30 mins prior.
-- **The "Rant" Interface:** A dedicated high-speed input for unstructured brain-dumps.
-
----
-
-## Implementation Prompt for Gemini 3 Flash
-**"I am providing my current codebase and the Final Build Spec. 
-
-Task: Refactor my existing code to implement the Obsidian Vault scanner, the OpenRouter API integration, and the Ollama Web Search features immediately. 
-
-Follow the Aesthetic Contract strictly—ensure the UI uses the Pink and Gold lining/accents exactly as described. The backend must be LAN-ready (0.0.0.0) and support multiple user directories. Return the full code for the updated server.js, ollamaClient.js, and the primary React components."**
