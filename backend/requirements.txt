@@ -15,3 +15,8 @@ watchdog           # Monitors project and vault directories for changes
 
 # SPEC Section 6: Scaffolding & Parsing (Optional but recommended)
 markdown           # To parse Obsidian notes for context injection
+
+# Testing
+pytest
+pytest-asyncio
+pytest-mock
