@@ -4,18 +4,22 @@ from pathlib import Path
 import os
 
 router = APIRouter()
-PROJECTS_ROOT = Path(__file__).parent.parent.parent / "projects"
+
+# Default to a 'projects' folder in the user's home dir
+PROJECTS_ROOT = Path.home() / ".lyra_app" / "projects"
+PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
 
 @router.get("/{project_name}")
 async def list_project_files(project_name: str):
-    path = PROJECTS_ROOT / project_name / "code"
+    path = PROJECTS_ROOT / project_name
+    # Search for files recursively or in a 'code' subfolder
     if not path.exists():
         return []
-    return [f for f in os.listdir(path) if os.path.isfile(path / f)]
-
-@router.get("/{project_name}/{file_name}")
-async def get_file_content(project_name: str, file_name: str):
-    path = PROJECTS_ROOT / project_name / "code" / file_name
-    if not path.exists():
-        raise HTTPException(status_code=404)
-    return {"content": path.read_text(), "fileName": file_name}
+    
+    files = []
+    for root, dirs, filenames in os.walk(path):
+        for f in filenames:
+            # Get relative path for the UI
+            rel_path = os.path.relpath(os.path.join(root, f), path)
+            files.append(rel_path)
+    return files

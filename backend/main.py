@@ -1,11 +1,14 @@
 # backend/main.py
+import os
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from routes import chat, session, model, project # New project route
-from provider_client import ProviderClient
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
-app = FastAPI(title="Lyra API v2.0")
+from routes import chat, session, model, project 
+
+app = FastAPI(title="Lyra AI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,23 +18,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API Routes
 app.include_router(chat.router, prefix="/chat")
 app.include_router(session.router, prefix="/session")
 app.include_router(model.router, prefix="/model")
 app.include_router(project.router, prefix="/project")
 
-# SPEC SECTION 3: VS Code Compatibility (OpenAI Format)
-@app.post("/v1/chat/completions")
-async def vscode_compatibility(request: Request):
-    body = await request.json()
-    model_name = body.get("model", "codestral")
-    # Extract last message
-    prompt = body.get("messages", [])[-1].get("content", "")
-    return StreamingResponse(
-        ProviderClient.get_response_stream(model_name, prompt),
-        media_type="text/event-stream"
-    )
+# --- FRONTEND SERVING ---
+# Get the absolute path to the 'frontend/dist' folder
+current_dir = Path(__file__).parent
+frontend_dist = current_dir.parent / "frontend" / "dist"
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3001)
+if frontend_dist.exists():
+    # Serve static files (CSS, JS, Images)
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+    # Catch-all route to serve index.html for the React SPA
+    @app.get("/{rest_of_path:path}")
+    async def serve_frontend(rest_of_path: str):
+        # If the request is for an API route that doesn't exist, this might catch it,
+        # but because routers are included above, they take priority.
+        return FileResponse(frontend_dist / "index.html")
+else:
+    @app.get("/")
+    async def root():
+        return {"message": "Frontend not built. Run 'npm run build' in the frontend folder."}

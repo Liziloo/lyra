@@ -9,15 +9,17 @@ const ModelSelector = ({ onSelect }) => {
     const fetchModels = async () => {
       try {
         setLoading(true); // Set loading state to true before sending request
-        const response = await axios.get("/model");
-
-        if (Array.isArray(response.data)) {
-          setModels(response.data);
-        } else if (typeof response.data === 'object') {
-          setModels(Object.keys(response.data));
+        // Inside useEffect
+        const response = await axios.get("/model/");
+        if (response.data.ollama_tags) {
+          // Map the objects to just the names
+          const names = response.data.ollama_tags.map((m) => m.name);
+          setModels(names);
         } else {
-          console.error("Invalid data format received from backend:", 
-response.data);
+          console.error(
+            "Invalid data format received from backend:",
+            response.data
+          );
         }
       } catch (error) {
         console.error("Error fetching models:", error);

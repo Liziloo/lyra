@@ -1,12 +1,17 @@
-import os
+# backend/session_manager.py
 import json
 import time
+import os
 from pathlib import Path
+
+# Saves data to C:\Users\Name\.lyra_app or /home/name/.lyra_app
+APP_DATA_DIR = Path.home() / ".lyra_app"
+SESSIONS_DIR = APP_DATA_DIR / "sessions"
 
 class SessionManager:
     def __init__(self, model_name: str):
-        self.model_name = model_name
-        self.session_dir = Path(__file__).parent.parent / "sessions" / model_name
+        self.model_name = model_name.replace(":", "_") # Windows doesn't like ':' in filenames
+        self.session_dir = SESSIONS_DIR / self.model_name
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.current_file = self.session_dir / "current_session.json"
 

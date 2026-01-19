@@ -44,9 +44,15 @@ backend/
   routes/
     chat.py
     model.py
+    project.py
     session.py
+  tests/
+    conftest.py
+    test_api.py
+    test_provider.py
+    test_sessions.py
   main.py
-  ollama_client.py
+  provider_client.py
   requirements.txt
   session_manager.py
 frontend/
@@ -81,6 +87,7 @@ models/
   lyra-code-lyra.modelfile
   lyra-code.modelfile
 .gitignore
+desktop.py
 LICENSE.md
 README.md
 SPEC.md
@@ -89,78 +96,62 @@ SPEC.md
 <files>
 This section contains the contents of the repository's files.
 
-<file path="backend/routes/chat.py">
-from fastapi import APIRouter, Body
-from fastapi.responses import StreamingResponse
-from ollama_client import OllamaClient
-from pydantic import BaseModel
+<file path="desktop.py">
+import webview
+import threading
+import uvicorn
+import sys
+import os
+from backend.main import app # Import your FastAPI app
 
-router = APIRouter()
+def start_backend():
+    # Runs the FastAPI server
+    uvicorn.run(app, host="127.0.0.1", port=3001)
 
-class ChatRequest(BaseModel):
-    input: str
-    model: str
-    projectName: str | None = None
+if __name__ == "__main__":
+    # 1. Start FastAPI in a background thread
+    t = threading.Thread(target=start_backend, daemon=True)
+    t.start()
 
-@router.post("/")
-async def chat_endpoint(request: ChatRequest):
-    # This returns a real-time stream of tokens to the frontend
-    return StreamingResponse(
-        OllamaClient.get_response_stream(request.model, request.input),
-        media_type="text/event-stream"
+    # 2. Create the Desktop Window
+    # In development: point to your Vite dev server
+    # In production: point to 'frontend/dist/index.html'
+    url = "http://localhost:5173" # Change this to your Vite port
+    
+    window = webview.create_window(
+        'Lyra AI', 
+        url, 
+        width=1200, 
+        height=800,
+        background_color='#f8f9fa' # --bright-snow from your SPEC
     )
+
+    # 3. Start the GUI
+    webview.start()
 </file>
 
-<file path="backend/routes/model.py">
-import json
-from pathlib import Path
+<file path="backend/routes/project.py">
+# backend/routes/project.py
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from ollama_client import OllamaClient
+from pathlib import Path
+import os
 
 router = APIRouter()
+PROJECTS_ROOT = Path(__file__).parent.parent.parent / "projects"
 
-# Path to your models registry
-REGISTRY_PATH = Path(__file__).parent.parent.parent / "models" / "registry.json"
+@router.get("/{project_name}")
+async def list_project_files(project_name: str):
+    path = PROJECTS_ROOT / project_name / "code"
+    if not path.exists():
+        return []
+    return [f for f in os.listdir(path) if os.path.isfile(path / f)]
 
-class ModelSwitchRequest(BaseModel):
-    modelName: str
-
-@router.get("/")
-async def list_available_models():
-    """Fetches both Ollama's installed models and Lyra's registry."""
-    try:
-        # Get installed models from local Ollama service
-        ollama_models = await OllamaClient.list_models()
-        
-        # Load local registry if it exists
-        registry = {}
-        if REGISTRY_PATH.exists():
-            registry = json.loads(REGISTRY_PATH.read_text())
-
-        return {
-            "success": True, 
-            "ollama_tags": ollama_models,
-            "registry": registry
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/switch")
-async def switch_model(request: ModelSwitchRequest):
-    """
-    In a more advanced setup, this would trigger model pre-loading
-    or session archiving. For now, it validates the request.
-    """
-    # Logic: Verify model exists in Ollama
-    all_models = await OllamaClient.list_models()
-    model_names = [m.get("name") for m in all_models]
-    
-    # Check if the requested model (or its base) is available
-    if any(request.modelName in name for name in model_names):
-        return {"success": True, "message": f"Switched to {request.modelName}"}
-    
-    raise HTTPException(status_code=400, detail="Model not found in local Ollama instance")
+@router.get("/{project_name}/{file_name}")
+async def get_file_content(project_name: str, file_name: str):
+    path = PROJECTS_ROOT / project_name / "code" / file_name
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return {"content": path.read_text(), "fileName": file_name}
 </file>
 
 <file path="backend/routes/session.py">
@@ -206,73 +197,171 @@ async def archive_session(model_name: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 </file>
 
-<file path="backend/main.py">
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from routes import chat, session, model
+<file path="backend/tests/conftest.py">
+import pytest
+import os
+from fastapi.testclient import TestClient
+from main import app
+from pathlib import Path
 
-app = FastAPI(title="Lyra API", version="2.0.0")
+@pytest.fixture
+def client():
+    """Returns a FastAPI test client."""
+    with TestClient(app) as c:
+        yield c
 
-# CORS configuration for Vite (usually port 5173 or 3000)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # For local dev, restrict in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Include Routers
-app.include_router(chat.router, prefix="/chat", tags=["Chat"])
-app.include_router(session.router, prefix="/session", tags=["Session"])
-app.include_router(model.router, prefix="/model", tags=["Model"])
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3001)
+@pytest.fixture
+def mock_projects_dir(tmp_path):
+    """Creates a temporary project structure for testing."""
+    project_dir = tmp_path / "projects" / "test_project" / "code"
+    project_dir.mkdir(parents=True)
+    (project_dir / "main.py").write_text("print('hello')")
+    return tmp_path
 </file>
 
-<file path="backend/ollama_client.py">
+<file path="backend/tests/test_api.py">
+import pytest
+from fastapi.testclient import TestClient
+
+def test_list_models(client):
+    """Ensure the model registry/tags endpoint responds."""
+    response = client.get("/model/")
+    assert response.status_code == 200
+    assert "ollama_tags" in response.json()
+
+def test_project_file_listing(client, mocker):
+    """Test project file retrieval logic."""
+    # Mock the PROJECTS_ROOT in the route to use a temp path
+    mocker.patch("routes.project.PROJECTS_ROOT", Path("/tmp/fake_projects"))
+    
+    # We expect a 404 or empty list if the path doesn't exist
+    response = client.get("/project/non_existent_project")
+    assert response.status_code == 200
+    assert response.json() == []
+
+def test_vscode_endpoint_exists(client):
+    """SPEC Section 3: Verify OpenAI compatibility endpoint for VS Code."""
+    payload = {
+        "model": "codestral",
+        "messages": [{"role": "user", "content": "Hello"}]
+    }
+    # We use stream=True usually, but TestClient handles the request
+    response = client.post("/v1/chat/completions", json=payload)
+    assert response.status_code == 200
+</file>
+
+<file path="backend/tests/test_provider.py">
+import pytest
+from provider_client import ProviderClient
+
+@pytest.mark.asyncio
+async def test_provider_switching_logic():
+    """Test that the client routes to the correct internal method."""
+    # This test verifies the 'async for' logic we fixed earlier
+    # We mock the internal stream methods to avoid hitting real APIs
+    prompt = "Test prompt"
+    model = "llama3"
+    
+    # Test Ollama path (default)
+    # Note: In a full test suite, you'd use pytest-mock to verify 
+    # ProviderClient._stream_ollama was called.
+    assert ProviderClient.get_response_stream(model, prompt) is not None
+
+def test_openrouter_api_key_loading():
+    """Ensure the system attempts to load the OpenRouter key from environment."""
+    import os
+    os.environ["OPENROUTER_API_KEY"] = "test_key"
+    # Re-import or reload to check
+    from provider_client import OPENROUTER_API_KEY
+    assert OPENROUTER_API_KEY != ""
+</file>
+
+<file path="backend/tests/test_sessions.py">
+import pytest
+import json
+from session_manager import SessionManager
+
+def test_session_lifecycle(tmp_path):
+    """Test creating, saving, and loading a session."""
+    # Override the session directory to a temp path
+    model_name = "test_model"
+    manager = SessionManager(model_name)
+    manager.session_dir = tmp_path / "sessions" / model_name
+    manager.current_file = manager.session_dir / "current_session.json"
+    manager.session_dir.mkdir(parents=True)
+
+    test_data = {"conversation": [{"role": "user", "content": "hi"}]}
+    
+    # Save
+    manager.save_session(test_data)
+    
+    # Load
+    loaded = manager.load_session()
+    assert loaded["conversation"][0]["content"] == "hi"
+
+    # Archive
+    manager.archive_session()
+    assert not manager.current_file.exists() # Should be moved/cleared
+</file>
+
+<file path="backend/provider_client.py">
+# backend/provider_client.py
 import httpx
 import json
+import os
 
 OLLAMA_URL = "http://localhost:11434/api"
+OPENROUTER_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
-class OllamaClient:
+class ProviderClient:
     @staticmethod
-    async def get_response_stream(model: str, prompt: str, context: list = []):
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "context": context,
-            "stream": True
-        }
+    async def get_response_stream(model: str, prompt: str, provider: str = "ollama", context: list = []):
+        # FIX: "yield from" is not allowed in async functions. 
+        # We must use "async for" to delegate to the sub-generators.
+        if provider == "openrouter":
+            async for chunk in ProviderClient._stream_openrouter(model, prompt):
+                yield chunk
+        else:
+            async for chunk in ProviderClient._stream_ollama(model, prompt, context):
+                yield chunk
+
+    @staticmethod
+    async def _stream_ollama(model: str, prompt: str, context: list):
+        payload = {"model": model, "prompt": prompt, "context": context, "stream": True}
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream("POST", f"{OLLAMA_URL}/generate", json=payload) as response:
                 async for line in response.aiter_lines():
                     if line:
-                        data = json.loads(line)
-                        yield f"data: {json.dumps(data)}\n\n"
-                        if data.get("done"):
-                            break
+                        # Standardize the data format for the frontend
+                        yield f"data: {line}\n\n"
+
+    @staticmethod
+    async def _stream_openrouter(model: str, prompt: str):
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True
+        }
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("POST", f"{OPENROUTER_URL}/chat/completions", json=payload, headers=headers) as resp:
+                async for line in resp.aiter_lines():
+                    if line.startswith("data: "):
+                        yield f"{line}\n\n"
 
     @staticmethod
     async def list_models():
+        """Used by the model route to fetch local tags."""
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.get(f"{OLLAMA_URL}/tags", timeout=5.0)
-                resp.raise_for_status()
                 return resp.json().get("models", [])
-            except httpx.RequestError:
-                return [] # Return empty list if Ollama is offline
-</file>
-
-<file path="backend/requirements.txt">
-fastapi
-uvicorn
-httpx
-pydantic
-python-multipart
+            except:
+                return []
 </file>
 
 <file path="backend/session_manager.py">
@@ -302,6 +391,180 @@ class SessionManager:
             archive_path = self.session_dir / f"session_{timestamp}.json"
             os.rename(self.current_file, archive_path)
             self.save_session({"conversation": []})
+</file>
+
+<file path="frontend/public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="frontend/src/App.css">
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+</file>
+
+<file path="frontend/src/main.jsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path="frontend/.gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="frontend/eslint.config.js">
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+</file>
+
+<file path="frontend/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="frontend/README.md">
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+</file>
+
+<file path="frontend/vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      "/chat": "http://localhost:3001",
+      "/model": "http://localhost:3001",
+      "/project": "http://localhost:3001",
+      "/session": "http://localhost:3001",
+    },
+  },
+});
 </file>
 
 <file path="legacy/routes/chat.js">
@@ -669,243 +932,6 @@ class SessionManager {
 module.exports = SessionManager;
 </file>
 
-<file path="frontend/public/vite.svg">
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
-</file>
-
-<file path="frontend/src/App.css">
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-</file>
-
-<file path="frontend/src/index.css">
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-}
-</file>
-
-<file path="frontend/src/main.jsx">
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.jsx'
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
-</file>
-
-<file path="frontend/.gitignore">
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-</file>
-
-<file path="frontend/eslint.config.js">
-import js from '@eslint/js'
-import globals from 'globals'
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import { defineConfig, globalIgnores } from 'eslint/config'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{js,jsx}'],
-    extends: [
-      js.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-    ],
-    languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
-      parserOptions: {
-        ecmaVersion: 'latest',
-        ecmaFeatures: { jsx: true },
-        sourceType: 'module',
-      },
-    },
-    rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-    },
-  },
-])
-</file>
-
-<file path="frontend/index.html">
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-</file>
-
-<file path="frontend/README.md">
-# React + Vite
-
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-</file>
-
-<file path="frontend/vite.config.js">
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-// https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
-})
-</file>
-
 <file path="models/lyra-code-lyra.modelfile">
 FROM codestral:22b
 
@@ -1079,6 +1105,166 @@ SOFTWARE.
 
 </file>
 
+<file path="backend/routes/chat.py">
+# backend/routes/chat.py
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from provider_client import ProviderClient
+from pydantic import BaseModel
+
+router = APIRouter()
+
+class ChatRequest(BaseModel):
+    input: str
+    model: str
+    projectName: str | None = None
+    fileContext: str | None = None  # Add this field
+    provider: str = "ollama"
+
+@router.post("/")
+async def chat_endpoint(request: ChatRequest):
+    # Combine the file content with the user's question
+    full_prompt = request.input
+    if request.fileContext:
+        full_prompt = f"Context from file:\n{request.fileContext}\n\nUser Question: {request.input}"
+
+    return StreamingResponse(
+        ProviderClient.get_response_stream(
+            request.model, 
+            full_prompt,  # Pass the combined prompt
+            provider=request.provider
+        ),
+        media_type="text/event-stream"
+    )
+</file>
+
+<file path="backend/routes/model.py">
+# backend/routes/model.py
+from fastapi import APIRouter, HTTPException
+from provider_client import ProviderClient # Changed
+from pydantic import BaseModel
+
+router = APIRouter()
+
+class ModelSwitchRequest(BaseModel):
+    modelName: str
+
+@router.get("/")
+async def list_available_models():
+    try:
+        # Use the updated client
+        ollama_models = await ProviderClient.list_models()
+        return {"success": True, "ollama_tags": ollama_models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/switch")
+async def switch_model(request: ModelSwitchRequest):
+    all_models = await ProviderClient.list_models()
+    model_names = [m.get("name") for m in all_models]
+    
+    if any(request.modelName in name for name in model_names):
+        return {"success": True, "message": f"Switched to {request.modelName}"}
+    
+    # If not in Ollama, we assume it's a cloud model from OpenRouter
+    return {"success": True, "message": f"Using cloud model {request.modelName}"}
+</file>
+
+<file path="backend/main.py">
+# backend/main.py
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from routes import chat, session, model, project # New project route
+from provider_client import ProviderClient
+from fastapi.staticfiles import StaticFiles
+import os
+
+app = FastAPI(title="Lyra API v2.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(chat.router, prefix="/chat")
+app.include_router(session.router, prefix="/session")
+app.include_router(model.router, prefix="/model")
+app.include_router(project.router, prefix="/project")
+
+# SPEC SECTION 3: VS Code Compatibility (OpenAI Format)
+@app.post("/v1/chat/completions")
+async def vscode_compatibility(request: Request):
+    body = await request.json()
+    model_name = body.get("model", "codestral")
+    # Extract last message
+    prompt = body.get("messages", [])[-1].get("content", "")
+    return StreamingResponse(
+        ProviderClient.get_response_stream(model_name, prompt),
+        media_type="text/event-stream"
+    )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=3001)
+</file>
+
+<file path="frontend/src/index.css">
+/* frontend/src/index.css */
+:root {
+  --bright-snow: #f8f9faff;
+  --graphite: #333333ff;
+  --brilliant-rose: #ff3aaeff;
+  --saffron: #e8b923ff;
+  background-color: var(--bright-snow);
+  color: var(--graphite);
+}
+
+body {
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.chat-container {
+  width: 100%;
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  height: 90vh;
+}
+
+.bubble {
+  padding: 12px 18px;
+  margin: 8px;
+  border-radius: 15px;
+  max-width: 80%;
+}
+
+.bubble.ai {
+  align-self: flex-start;
+  background: white;
+  border: 2px solid var(--saffron); /* Decorative Gold Saffron */
+  color: black;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: var(--graphite);
+  color: white;
+  border-bottom: 3px solid var(--brilliant-rose);
+}
+
+input {
+  border: 2px solid var(--brilliant-rose);
+  padding: 10px;
+  border-radius: 4px;
+}
+</file>
+
 <file path="frontend/package.json">
 {
   "name": "frontend",
@@ -1108,6 +1294,196 @@ SOFTWARE.
     "vite": "^7.2.4"
   }
 }
+</file>
+
+<file path="backend/requirements.txt">
+# Web Framework
+fastapi
+uvicorn[standard]  # 'standard' includes uvloop for high performance on Linux/AMD
+
+# HTTP & API
+httpx              # Required for streaming calls to Ollama and OpenRouter
+pydantic           # Data validation
+python-multipart   # Form data support
+
+# Security & Config
+python-dotenv      # To manage OPENROUTER_API_KEY from a .env file
+
+# SPEC Section 2: File Watching (Obsidian Vault Integration)
+watchdog           # Monitors project and vault directories for changes
+
+# SPEC Section 6: Scaffolding & Parsing (Optional but recommended)
+markdown           # To parse Obsidian notes for context injection
+
+# Testing
+pytest
+pytest-asyncio
+pytest-mock
+</file>
+
+<file path="frontend/src/components/ModelSelector.jsx">
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ModelSelector = ({ onSelect }) => {
+  const [models, setModels] = useState([]);
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        setLoading(true); // Set loading state to true before sending request
+        // Inside useEffect
+        const response = await axios.get("/model/");
+        if (response.data.ollama_tags) {
+          // Map the objects to just the names
+          const names = response.data.ollama_tags.map((m) => m.name);
+          setModels(names);
+        } else {
+          console.error(
+            "Invalid data format received from backend:",
+            response.data
+          );
+        }
+      } catch (error) {
+        console.error("Error fetching models:", error);
+      } finally {
+        setLoading(false); // Set loading state to false after receiving response or catching error
+      }
+    };
+
+    fetchModels();
+  }, []);
+
+  const handleSelect = async (modelName) => {
+    try {
+      await axios.post("/model/switch", { modelName }); // Call backend for model switching
+      onSelect(modelName);
+    } catch (error) {
+      console.error("Error switching models:", error);
+    }
+  };
+
+  return (
+    <select onChange={(e) => handleSelect(e.target.value)} disabled={loading}>
+      {models.map((model) => (
+        <option key={model} value={model}>
+          {model}
+        </option>
+      ))}
+    </select>
+  );
+};
+
+export default ModelSelector;
+</file>
+
+<file path="frontend/src/components/ProjectPanel.jsx">
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ProjectPanel = ({ projectName, onSelect }) => {
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  useEffect(() => {
+    const fetchProjectFiles = async () => {
+      try {
+        setLoading(true); // Set loading state to true before sending request
+        const response = await axios.get(`/project/${projectName}`);
+        setFiles(response.data);
+      } catch (error) {
+        console.error("Error fetching project files:", error);
+      } finally {
+        setLoading(false); // Set loading state to false after receiving response or catching error
+      }
+    };
+
+    if (projectName) {
+      fetchProjectFiles();
+    }
+  }, [projectName]);
+
+  const handleSelect = async (fileName) => {
+    try {
+      const response = await axios.get(`/project/${projectName}/${fileName}`); // Read project file from backend
+      onSelect(response.data, fileName); // Call the onSelect prop with the content and filename
+    } catch (error) {
+      console.error("Error reading project file:", error);
+    }
+  };
+
+  return (
+    <div className="project-panel">
+      {loading
+        ? "Loading..."
+        : files.map((file) => (
+            <button key={file} onClick={() => handleSelect(file)}>
+              {file}
+            </button>
+          ))}
+    </div>
+  );
+};
+
+export default ProjectPanel;
+</file>
+
+<file path="frontend/src/App.jsx">
+import React, { useState } from "react";
+import ChatBox from "./components/ChatBox";
+import ModelSelector from "./components/ModelSelector";
+import ProjectPanel from "./components/ProjectPanel";
+
+const App = () => {
+  const [selectedModel, setSelectedModel] = useState("codestral");
+  const [activeProject, setActiveProject] = useState("my-project");
+  const [fileContext, setFileContext] = useState(null);
+
+  return (
+    <div className="app">
+      {/* 1. Model Selection */}
+      <ModelSelector onSelect={setSelectedModel} />
+
+      {/* 2. Project Selection (Temporary input to use setActiveProject) */}
+      <div className="project-config">
+        <input
+          value={activeProject}
+          onChange={(e) => setActiveProject(e.target.value)}
+          placeholder="Project Name..."
+        />
+      </div>
+
+      {selectedModel && (
+        <div className="main-layout" style={{ display: "flex" }}>
+          {/* 3. Chat Box: Now receives fileContext so it can "see" your code */}
+          <ChatBox
+            model={selectedModel}
+            projectName={activeProject}
+            fileContext={fileContext}
+          />
+
+          {/* 4. Project Panel: Updates the fileContext when a file is clicked */}
+          <ProjectPanel
+            projectName={activeProject}
+            onSelect={(data) => setFileContext(data)}
+          />
+        </div>
+      )}
+
+      {/* Show a preview of the attached context if it exists */}
+      {fileContext && (
+        <div className="context-indicator">
+          Attached File: {fileContext.fileName}
+          <button onClick={() => setFileContext(null)}>x</button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// CRITICAL: This fixes the "Fast Refresh" error
+export default App;
 </file>
 
 <file path=".gitignore">
@@ -1327,182 +1703,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-</file>
 
-<file path="frontend/src/components/ChatBox.jsx">
-import React, { useState } from "react";
-import axios from "axios";
-
-const ChatBox = ({ model, projectName, setInput }) => {
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false); // Add loading state
-
-  const sendMessage = async () => {
-    try {
-      setLoading(true); // Set loading state to true before sending request
-      const response = await axios.post("/chat", { input: setInput, 
-model, projectName });
-      setMessages([
-        ...messages,
-        { text: setInput, isUser: true },
-        {
-          text: response.data.output,
-          isUser: false,
-        },
-      ]);
-      setInput(""); // Clear the input field after sending the message
-    } catch (error) {
-      console.error("Error sending message:", error);
-    } finally {
-      setLoading(false); // Set loading state to false after receiving response or catching error
-    }
-  };
-
-  return (
-    <div className="chat-box">
-      {/* Render messages here */}
-      <input value={setInput} onChange={(e) => setInput(e.target.value)} 
-/>
-      <button onClick={sendMessage} disabled={loading}>
-        {loading ? "Sending..." : "Send"}
-      </button>
-    </div>
-  );
-};
-
-export default ChatBox;
-</file>
-
-<file path="frontend/src/components/ModelSelector.jsx">
-import React, { useState, useEffect } from "react";
-import axios from "axios";
-
-const ModelSelector = ({ onSelect }) => {
-  const [models, setModels] = useState([]);
-  const [loading, setLoading] = useState(false); // Add loading state
-
-  useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        setLoading(true); // Set loading state to true before sending request
-        const response = await axios.get("/model");
-
-        if (Array.isArray(response.data)) {
-          setModels(response.data);
-        } else if (typeof response.data === 'object') {
-          setModels(Object.keys(response.data));
-        } else {
-          console.error("Invalid data format received from backend:", 
-response.data);
-        }
-      } catch (error) {
-        console.error("Error fetching models:", error);
-      } finally {
-        setLoading(false); // Set loading state to false after receiving response or catching error
-      }
-    };
-
-    fetchModels();
-  }, []);
-
-  const handleSelect = async (modelName) => {
-    try {
-      await axios.post("/model/switch", { modelName }); // Call backend for model switching
-      onSelect(modelName);
-    } catch (error) {
-      console.error("Error switching models:", error);
-    }
-  };
-
-  return (
-    <select onChange={(e) => handleSelect(e.target.value)} disabled={loading}>
-      {models.map((model) => (
-        <option key={model} value={model}>
-          {model}
-        </option>
-      ))}
-    </select>
-  );
-};
-
-export default ModelSelector;
-</file>
-
-<file path="frontend/src/components/ProjectPanel.jsx">
-import React, { useState, useEffect } from "react";
-import axios from "axios";
-
-const ProjectPanel = ({ projectName, onSelect }) => {
-  const [files, setFiles] = useState([]);
-  const [loading, setLoading] = useState(false); // Add loading state
-
-  useEffect(() => {
-    const fetchProjectFiles = async () => {
-      try {
-        setLoading(true); // Set loading state to true before sending request
-        const response = await axios.get(`/project/${projectName}`);
-        setFiles(response.data);
-      } catch (error) {
-        console.error("Error fetching project files:", error);
-      } finally {
-        setLoading(false); // Set loading state to false after receiving response or catching error
-      }
-    };
-
-    if (projectName) {
-      fetchProjectFiles();
-    }
-  }, [projectName]);
-
-  const handleSelect = async (fileName) => {
-    try {
-      const response = await axios.get(`/project/${projectName}/${fileName}`); // Read project file from backend
-      onSelect(response.data, fileName); // Call the onSelect prop with the content and filename
-    } catch (error) {
-      console.error("Error reading project file:", error);
-    }
-  };
-
-  return (
-    <div className="project-panel">
-      {loading
-        ? "Loading..."
-        : files.map((file) => (
-            <button key={file} onClick={() => handleSelect(file)}>
-              {file}
-            </button>
-          ))}
-    </div>
-  );
-};
-
-export default ProjectPanel;
-</file>
-
-<file path="frontend/src/App.jsx">
-import React, { useState } from "react";
-import ChatBox from "./components/ChatBox";
-import ModelSelector from "./components/ModelSelector";
-import ProjectPanel from "./components/ProjectPanel";
-
-const App = () => {
-  const [selectedModel, setSelectedModel] = useState(null);
-  const [projectName, setProjectName] = useState(null); // Add project name state
-
-  return (
-    <div className="app">
-      <ModelSelector onSelect={setSelectedModel} />
-      {selectedModel && (
-        <>
-          <ChatBox model={selectedModel} projectName={projectName} />
-          <ProjectPanel projectName={projectName} onSelect={setProjectName} />
-        </>
-      )}
-    </div>
-  );
-};
-
-export default App;
+repomix-output.xml
 </file>
 
 <file path="SPEC.md">
@@ -1586,6 +1788,117 @@ tags:
   - Thermaltake Toughpower GF1 (2024) 850 W 80+ Gold Certified Fully Modular ATX Power Supply
 - **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
 - **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
+</file>
+
+<file path="frontend/src/components/ChatBox.jsx">
+// frontend/src/components/ChatBox.jsx
+import React, { useState } from "react";
+
+const ChatBox = ({ model, projectName, fileContext }) => {
+  // Added fileContext here
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const sendMessage = async () => {
+    if (!input) return;
+
+    // UI: Add the user message
+    const userMsg = { text: input, isUser: true };
+    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
+
+    const currentInput = input;
+    setInput("");
+
+    try {
+      const response = await fetch("/chat/", {
+        // Note: using relative path for desktop app
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: currentInput,
+          model,
+          projectName,
+          // Send the file content if it exists, otherwise send null
+          fileContext: fileContext ? fileContext.content : null,
+        }),
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantText = "";
+
+      setMessages((prev) => [...prev, { text: "", isUser: false }]);
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n"); // Split by single newline
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const jsonStr = line.substring(6).trim();
+              if (!jsonStr) continue;
+
+              const data = JSON.parse(jsonStr);
+              // Standardize: Ollama uses .response, OpenRouter uses choices[0].delta.content
+              const token =
+                data.response || data.choices?.[0]?.delta?.content || "";
+
+              assistantText += token;
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1].text = assistantText;
+                return updated;
+              });
+            } catch (e) {
+              console.log("Skipping partial/invalid JSON:", line);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Stream error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="chat-container">
+      {/* Optional: Visual indicator that AI "sees" the file */}
+      {fileContext && (
+        <div style={{ fontSize: "12px", color: "#888", padding: "5px" }}>
+          Context active: {fileContext.fileName}
+        </div>
+      )}
+
+      <div className="messages">
+        {messages.map((m, i) => (
+          <div key={i} className={`bubble ${m.isUser ? "user" : "ai"}`}>
+            {m.text}
+          </div>
+        ))}
+      </div>
+      <div className="input-area">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+        />
+        <button onClick={sendMessage} disabled={loading}>
+          Send
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default ChatBox;
 </file>
 
 </files>
