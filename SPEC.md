@@ -1,9 +1,3 @@
-To get Project Lyra moving on your Linux machine, you should focus on a **"Thin Slice"** prototype. This approach establishes the bridge between your React frontend and your local hardware (Ollama/ROCm) before adding the complex multi-pass reasoning or background watchers.
-
-Below is a stripped-back `SPEC.md` that focuses on the core utility: a functional, beautifully styled AI chat that can read your local files and toggle between local and cloud providers.
-
----
-
 # Prototype Spec: Project Lyra (v0.1 - The Core)
 
 ## 1. Core Intelligence (The "Direct" Brain)
