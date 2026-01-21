@@ -1,0 +1,1173 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+backend/
+  routes/
+    chat.js
+    model.js
+    ollamaClient.js
+    session.js
+  modelSwitcher.js
+  package.json
+  projectManager.js
+  server.js
+  sessionManager.js
+frontend/
+  public/
+    vite.svg
+  src/
+    components/
+      ChatBox.jsx
+      ModelSelector.jsx
+      ProjectPanel.jsx
+    App.css
+    App.jsx
+    index.css
+    main.jsx
+  .gitignore
+  eslint.config.js
+  index.html
+  package.json
+  README.md
+  vite.config.js
+models/
+  lyra-code-lyra.modelfile
+  lyra-code.modelfile
+.gitignore
+LICENSE.md
+README.md
+SPEC.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/routes/chat.js">
+const express = require('express');
+const router = express.Router();
+const ollamaClient = require('../ollamaClient');
+
+router.post('/', async (req, res) => {
+    // Extract input from request body
+    const { input } = req.body;
+
+    try {
+        // Call ollamaClient to get response
+        const response = await ollamaClient.getResponse(input);
+
+        // Send response back to UI
+        res.json({ success: true, data: response });
+    } catch (error) {
+        console.error('Error in chat route:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+module.exports = router;
+</file>
+
+<file path="backend/routes/ollamaClient.js">
+const axios = require('axios');
+
+const OLLAMA_API_URL = 'http://localhost:11434/api'; // Update with your Ollama server URL
+
+async function listModels() {
+  try {
+    const response = await axios.get(`${OLLAMA_API_URL}/tags`);
+    return response.data.models;
+  } catch (error) {
+    console.error('Error listing models:', error);
+    throw error;
+  }
+}
+
+async function generateResponse(model, prompt, context = []) {
+  try {
+    const payload = { model, prompt, context };
+    const response = await axios.post(`${OLLAMA_API_URL}/generate`, 
+payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error generating response:', error);
+    throw error;
+  }
+}
+
+// Add more functions for session management and model switching as needed
+
+module.exports = { listModels, generateResponse };
+</file>
+
+<file path="backend/routes/session.js">
+const express = require('express');
+const router = express.Router();
+const sessionManager = require('../sessionManager');
+
+router.get('/', (req, res) => {
+    // Get current session data
+    const sessionData = sessionManager.getCurrentSession();
+
+    // Send session data back to UI
+    res.json({ success: true, data: sessionData });
+});
+
+router.post('/save', (req, res) => {
+    // Extract session data from request body
+    const { sessionData } = req.body;
+
+    try {
+        // Save session data to file
+        sessionManager.saveSession(sessionData);
+
+        // Send success response back to UI
+        res.json({ success: true, message: 'Session saved successfully' 
+});
+    } catch (error) {
+        console.error('Error in save session route:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+module.exports = router;
+</file>
+
+<file path="backend/modelSwitcher.js">
+const fs = require("fs");
+const path = require("path");
+const SessionManager = require("./sessionManager");
+
+class ModelSwitcher {
+  constructor() {
+    this.configPath = path.join(
+      __dirname,
+      "..",
+      "config",
+      "default_model.json"
+    );
+    this.modelsRegistryPath = path.join(__dirname, "..", "models");
+    this.currentModelName = null;
+    this.sessionManager = null;
+  }
+
+  // Read default model name from config file
+  getDefaultModel() {
+    const rawData = fs.readFileSync(this.configPath);
+    return JSON.parse(rawData).default_model;
+  }
+
+  // Load Modelfile for the given model name
+  loadModelfile(modelName) {
+    const modelfilePath = path.join(
+      this.modelsRegistryPath,
+      modelName,
+      "Modelfile"
+    );
+    if (fs.existsSync(modelfilePath)) {
+      return fs.readFileSync(modelfilePath, "utf-8");
+    } else {
+      throw new Error(`Modelfile not found for model: 
+${modelName}`);
+    }
+  }
+
+  // Switch to the given model and load its session context
+  async switchModel(modelName) {
+    if (this.currentModelName === modelName) {
+      console.log(`Already using model: ${modelName}`);
+      return;
+    }
+
+    try {
+      // Archive current session before switching
+      if (this.sessionManager) {
+        this.sessionManager.archiveCurrentSession();
+      }
+
+      // Load new session manager for the selected model
+      this.sessionManager = new SessionManager(modelName);
+      const modelfile = this.loadModelfile(modelName);
+
+      // Update current model name and return Modelfile
+      this.currentModelName = modelName;
+      return modelfile;
+    } catch (error) {
+      console.error("Error switching models:", error);
+      throw error;
+    }
+  }
+}
+
+module.exports = ModelSwitcher;
+</file>
+
+<file path="backend/server.js">
+const express = require("express");
+const app = express();
+app.use(express.json());
+
+// Import routes
+const chatRoutes = require("./routes/chat");
+const sessionRoutes = require("./routes/session");
+const modelRoutes = require("./routes/model");
+
+// Use routes
+app.use("/chat", chatRoutes);
+app.use("/session", sessionRoutes);
+app.use("/model", modelRoutes);
+
+// Start server
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+</file>
+
+<file path="backend/sessionManager.js">
+const fs = require("fs");
+const path = require("path");
+
+class SessionManager {
+  constructor(modelName) {
+    this.modelName = modelName;
+    this.sessionPath = path.join(__dirname, "..", "sessions", modelName);
+    this.currentSessionFile = path.join(
+      this.sessionPath,
+      "current_session.json"
+    );
+  }
+
+  // Load current session data from JSON file
+  loadCurrentSession() {
+    if (fs.existsSync(this.currentSessionFile)) {
+      const rawData = fs.readFileSync(this.currentSessionFile);
+      return JSON.parse(rawData);
+    } else {
+      // Return empty session data if file doesn't exist
+      return { conversation: [] };
+    }
+  }
+
+  // Save current session data to JSON file
+  saveCurrentSession(sessionData) {
+    fs.writeFileSync(this.currentSessionFile, JSON.stringify(sessionData));
+  }
+
+  // Archive the current session with a timestamp and clear it for new conversation;
+  archiveCurrentSession() {
+    const timestamp = Date.now();
+    const archivedSessionFile = path.join(
+      this.sessionPath,
+      `session_${timestamp}.json`
+    );
+    fs.copyFileSync(this.currentSessionFile, archivedSessionFile);
+    this.saveCurrentSession({ conversation: [] }); // Clear current session data
+  }
+
+  // Add a new message to the current session and save it
+  addMessageToSession(message) {
+    const sessionData = this.loadCurrentSession();
+    sessionData.conversation.push(message);
+    this.saveCurrentSession(sessionData);
+  }
+}
+
+module.exports = SessionManager;
+</file>
+
+<file path="frontend/public/vite.svg">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-hidden="true" role="img" class="iconify iconify--logos" width="31.88" height="32" preserveAspectRatio="xMidYMid meet" viewBox="0 0 256 257"><defs><linearGradient id="IconifyId1813088fe1fbc01fb466" x1="-.828%" x2="57.636%" y1="7.652%" y2="78.411%"><stop offset="0%" stop-color="#41D1FF"></stop><stop offset="100%" stop-color="#BD34FE"></stop></linearGradient><linearGradient id="IconifyId1813088fe1fbc01fb467" x1="43.376%" x2="50.316%" y1="2.242%" y2="89.03%"><stop offset="0%" stop-color="#FFEA83"></stop><stop offset="8.333%" stop-color="#FFDD35"></stop><stop offset="100%" stop-color="#FFA800"></stop></linearGradient></defs><path fill="url(#IconifyId1813088fe1fbc01fb466)" d="M255.153 37.938L134.897 252.976c-2.483 4.44-8.862 4.466-11.382.048L.875 37.958c-2.746-4.814 1.371-10.646 6.827-9.67l120.385 21.517a6.537 6.537 0 0 0 2.322-.004l117.867-21.483c5.438-.991 9.574 4.796 6.877 9.62Z"></path><path fill="url(#IconifyId1813088fe1fbc01fb467)" d="M185.432.063L96.44 17.501a3.268 3.268 0 0 0-2.634 3.014l-5.474 92.456a3.268 3.268 0 0 0 3.997 3.378l24.777-5.718c2.318-.535 4.413 1.507 3.936 3.838l-7.361 36.047c-.495 2.426 1.782 4.5 4.151 3.78l15.304-4.649c2.372-.72 4.652 1.36 4.15 3.788l-11.698 56.621c-.732 3.542 3.979 5.473 5.943 2.437l1.313-2.028l72.516-144.72c1.215-2.423-.88-5.186-3.54-4.672l-25.505 4.922c-2.396.462-4.435-1.77-3.759-4.114l16.646-57.705c.677-2.35-1.37-4.583-3.769-4.113Z"></path></svg>
+</file>
+
+<file path="frontend/src/App.css">
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+</file>
+
+<file path="frontend/src/index.css">
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+</file>
+
+<file path="frontend/src/main.jsx">
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+</file>
+
+<file path="frontend/.gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+</file>
+
+<file path="frontend/eslint.config.js">
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+</file>
+
+<file path="frontend/index.html">
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>frontend</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+</file>
+
+<file path="frontend/README.md">
+# React + Vite
+
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+
+Currently, two official plugins are available:
+
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+
+## React Compiler
+
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+
+## Expanding the ESLint configuration
+
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+</file>
+
+<file path="frontend/vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+</file>
+
+<file path="models/lyra-code-lyra.modelfile">
+FROM codestral:22b
+
+SYSTEM """
+You are an expert programmer who writes simple, clean, and efficient code. 
+Explain your logic clearly before showing code examples. 
+Always include error handling and explain any non-obvious parts with comments.
+When possible, suggest optimizations or alternative approaches.
+
+Context:
+The lyra app will run locally with a Vite/React frontend and local Node.js backend that communicates with a locally-hosted Ollama server. It must support multiple models and Modelfiles, long-context sessions, and integration with project files and VSCode. The UI will be served as a local web interface.
+
+1. Folder layout for multi-model support
+~/lyra/
+│
+├─ models/                  # Ollama models + Modelfiles
+│   ├─ codestral-22b/
+│   │   └─ Modelfile
+│   ├─ general-14b/
+│   │   └─ Modelfile
+│   └─ <other_model>/
+│       └─ Modelfile
+│
+├─ sessions/                # Active sessions per model
+│   ├─ codestral-22b/
+│   │   ├─ current_session.json
+│   │   └─ session_<timestamp>.json
+│   ├─ general-14b/
+│   └─ ...
+│
+├─ projects/                # Project files
+│   └─ <project_name>/code
+│       └─ ...              # Project source files
+│
+├─ embeddings/              # Project embeddings (optional per model)
+│   └─ <project_name>_<model>.sqlite
+│
+├─ logs/
+│   └─ assistant.log
+│
+├─ config/
+│   ├─ default_model.json
+│   └─ settings.json
+│
+├─ temp/                    # Temporary files
+│
+├─ backend/                 # Node.js backend
+│   ├─ server.js            # Main Express server
+|   ├─ ollamaClient.js      # handles all Ollama API requests
+│   ├─ sessionManager.js    # Session handling
+│   ├─ modelSwitcher.js     # Model switching logic
+│   ├─ projectManager.js    # Project file integration
+│   └─ routes/              # Express routes
+│       ├─ chat.js          # Chat endpoints
+│       ├─ session.js       # Session endpoints
+│       └─ model.js         # Model switching endpoints
+│
+├─ frontend/                      # React frontend
+│   └─ src/
+│       ├─ App.jsx
+│       └─ components/
+│           ├─ ChatBox.jsx
+│           ├─ ModelSelector.jsx
+│           └─ ProjectPanel.jsx
+│
+└─ README.md                # Instructions and testing info  
+
+"""
+
+PARAMETER num_ctx 32768
+
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+
+PARAMETER repeat_penalty 1.1
+</file>
+
+<file path="models/lyra-code.modelfile">
+FROM codestral:22b
+
+SYSTEM """
+You are a senior software engineer assisting in the construction of a developer tool.
+You prioritize correctness, explicit reasoning, and maintainable design.
+You preserve stated invariants and architectural constraints across long sessions.
+When modifying code, you keep interfaces stable unless explicitly instructed otherwise.
+You do not invent APIs or libraries.
+
+=== ALLOWED STACK ===
+
+Languages / Runtimes:
+- JavaScript (ES6+), Node.js
+- HTML5, CSS3
+- Python 3.11+
+- SQL (standard dialect)
+- Bash / CLI scripting
+
+Front-end / Web frameworks:
+- React
+
+Back-end / Python frameworks:
+- Flask
+- Django
+- Express.js (Node)
+
+Databases / ORMs:
+- PostgreSQL
+- SQLite
+- SQLAlchemy
+
+API usage:
+- REST APIs, JSON parsing
+- HTTP requests via fetch (JS) or requests/httpx (Python)
+- Handling authentication tokens, headers, and responses
+
+Version control / project workflow:
+- Git, GitHub, commit conventions
+- CLI-first workflows
+
+=== FORBIDDEN / DISALLOWED ===
+- Languages not listed above (Ruby, Java, C#, Rust, Go)
+- Cloud SDKs (AWS, Azure, GCP) unless explicitly approved
+- Electron or desktop GUI frameworks
+- Anything outside modern full-stack web dev, Python backend, or API usage
+
+=== CODING RULES ===
+- Preserve project structure and naming conventions typical to Odin Project and CS50 modules.
+- Preserve invariants across long sessions.
+- Do not invent APIs, endpoints, or schema fields.
+- Ask before introducing any library or framework not in the allowed list.
+- Solutions must be idiomatic and runnable for CLI / project deployment.
+- Output full code files, not fragments, unless explicitly requested.
+
+You do not justify these rules unless asked.
+"""
+
+PARAMETER num_ctx 32768
+
+PARAMETER temperature 0.2
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+
+PARAMETER repeat_penalty 1.1
+</file>
+
+<file path=".gitignore">
+backend/node_modules
+</file>
+
+<file path="LICENSE.md">
+# MIT License
+
+Copyright (c) 2026 Liz Casler Loomans
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</file>
+
+<file path="README.md">
+
+</file>
+
+<file path="backend/routes/model.js">
+const express = require("express");
+const router = express.Router();
+const fs = require("fs").promises;
+const path = require("path");
+const modelSwitcher = require("../modelSwitcher");
+
+// Read the models registry file
+async function readModelsRegistry() {
+  const registryPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    "models",
+    "registry.json"
+  );
+  try {
+    const data = await fs.readFile(registryPath, "utf8");
+    return JSON.parse(data);
+  } catch (error) {
+    console.error("Error reading models registry:", error);
+    throw new Error("Failed to read models registry");
+  }
+}
+
+router.get("/", async (req, res) => {
+  try {
+    // Read the models registry and send available model names back to UI
+    const modelsRegistry = await readModelsRegistry();
+    res.json({ success: true, data: Object.keys(modelsRegistry) });
+  } catch (error) {
+    console.error("Error in get models route:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+router.post("/switch", async (req, res) => {
+  // Extract new model name from request body
+  const { modelName } = req.body;
+
+  try {
+    // Read the models registry to validate the requested model
+    const modelsRegistry = await readModelsRegistry();
+    if (!modelsRegistry[modelName]) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid model name" });
+    }
+
+    // Switch to the new model
+    await modelSwitcher.switchModel(modelName);
+
+    // Send success response back to UI
+    res.json({ success: true, message: "Model switched successfully" });
+  } catch (error) {
+    console.error("Error in switch model route:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+module.exports = router;
+</file>
+
+<file path="backend/projectManager.js">
+const fs = require("fs");
+const path = require("path");
+const sqlite3 = require("sqlite3").verbose();
+
+class ProjectManager {
+  constructor(projectName, modelName) {
+    this.projectPath = path.join(__dirname, "..", "projects", projectName);
+    this.metadataFile = path.join(this.projectPath, "metadata.json");
+    this.contextChunksPath = path.join(this.projectPath, "context_chunks");
+    this.embeddingsDb = new sqlite3.Database(
+      path.join(
+        __dirname,
+        "..",
+        "embeddings",
+        `${projectName}_${modelName}.sqlite`
+      )
+    );
+  }
+
+  // Read project metadata from JSON file
+  readMetadata() {
+    if (fs.existsSync(this.metadataFile)) {
+      const rawData = fs.readFileSync(this.metadataFile);
+      return JSON.parse(rawData);
+    } else {
+      throw new Error(`Metadata not found for project: ${this.projectPath}`);
+    }
+  }
+
+  // Read file content from the project code directory
+  readFile(fileName) {
+    const filePath = path.join(this.projectPath, "code", fileName);
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf-8");
+    } else {
+      throw new Error(`File not found: ${fileName}`);
+    }
+  }
+
+  // Write content to a file in the project code directory
+  writeFile(fileName, content) {
+    const filePath = path.join(this.projectPath, "code", fileName);
+    fs.writeFileSync(filePath, content);
+  }
+
+  // Read context chunks for RAG from the project directory
+  readContextChunks() {
+    return fs.readdirSync(this.contextChunksPath).map((chunkFileName) => {
+      const chunkFilePath = path.join(this.contextChunksPath, chunkFileName);
+      return fs.readFileSync(chunkFilePath, "utf-8");
+    });
+  }
+
+  // Update embeddings cache for the project and model in SQLite
+  database;
+  updateEmbeddingsCache(embeddings) {
+    const stmt = this.embeddingsDb.prepare(
+      "INSERT OR REPLACE INTO embeddings (id, vector) VALUES (?, ?)"
+    );
+    embeddings.forEach(({ id, vector }) => {
+      stmt.run(id, JSON.stringify(vector));
+    });
+    stmt.finalize();
+  }
+}
+
+module.exports = ProjectManager;
+</file>
+
+<file path="frontend/package.json">
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "vite": "^7.2.4"
+  }
+}
+</file>
+
+<file path="frontend/src/components/ChatBox.jsx">
+import React, { useState } from "react";
+import axios from "axios";
+
+const ChatBox = ({ model, projectName, setInput }) => {
+  const [messages, setMessages] = useState([]);
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  const sendMessage = async () => {
+    try {
+      setLoading(true); // Set loading state to true before sending request
+      const response = await axios.post("/chat", { input: setInput, 
+model, projectName });
+      setMessages([
+        ...messages,
+        { text: setInput, isUser: true },
+        {
+          text: response.data.output,
+          isUser: false,
+        },
+      ]);
+      setInput(""); // Clear the input field after sending the message
+    } catch (error) {
+      console.error("Error sending message:", error);
+    } finally {
+      setLoading(false); // Set loading state to false after receiving response or catching error
+    }
+  };
+
+  return (
+    <div className="chat-box">
+      {/* Render messages here */}
+      <input value={setInput} onChange={(e) => setInput(e.target.value)} 
+/>
+      <button onClick={sendMessage} disabled={loading}>
+        {loading ? "Sending..." : "Send"}
+      </button>
+    </div>
+  );
+};
+
+export default ChatBox;
+</file>
+
+<file path="frontend/src/components/ModelSelector.jsx">
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ModelSelector = ({ onSelect }) => {
+  const [models, setModels] = useState([]);
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        setLoading(true); // Set loading state to true before sending request
+        const response = await axios.get("/model");
+
+        if (Array.isArray(response.data)) {
+          setModels(response.data);
+        } else if (typeof response.data === 'object') {
+          setModels(Object.keys(response.data));
+        } else {
+          console.error("Invalid data format received from backend:", 
+response.data);
+        }
+      } catch (error) {
+        console.error("Error fetching models:", error);
+      } finally {
+        setLoading(false); // Set loading state to false after receiving response or catching error
+      }
+    };
+
+    fetchModels();
+  }, []);
+
+  const handleSelect = async (modelName) => {
+    try {
+      await axios.post("/model/switch", { modelName }); // Call backend for model switching
+      onSelect(modelName);
+    } catch (error) {
+      console.error("Error switching models:", error);
+    }
+  };
+
+  return (
+    <select onChange={(e) => handleSelect(e.target.value)} disabled={loading}>
+      {models.map((model) => (
+        <option key={model} value={model}>
+          {model}
+        </option>
+      ))}
+    </select>
+  );
+};
+
+export default ModelSelector;
+</file>
+
+<file path="frontend/src/components/ProjectPanel.jsx">
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ProjectPanel = ({ projectName, onSelect }) => {
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false); // Add loading state
+
+  useEffect(() => {
+    const fetchProjectFiles = async () => {
+      try {
+        setLoading(true); // Set loading state to true before sending request
+        const response = await axios.get(`/project/${projectName}`);
+        setFiles(response.data);
+      } catch (error) {
+        console.error("Error fetching project files:", error);
+      } finally {
+        setLoading(false); // Set loading state to false after receiving response or catching error
+      }
+    };
+
+    if (projectName) {
+      fetchProjectFiles();
+    }
+  }, [projectName]);
+
+  const handleSelect = async (fileName) => {
+    try {
+      const response = await axios.get(`/project/${projectName}/${fileName}`); // Read project file from backend
+      onSelect(response.data, fileName); // Call the onSelect prop with the content and filename
+    } catch (error) {
+      console.error("Error reading project file:", error);
+    }
+  };
+
+  return (
+    <div className="project-panel">
+      {loading
+        ? "Loading..."
+        : files.map((file) => (
+            <button key={file} onClick={() => handleSelect(file)}>
+              {file}
+            </button>
+          ))}
+    </div>
+  );
+};
+
+export default ProjectPanel;
+</file>
+
+<file path="frontend/src/App.jsx">
+import React, { useState } from "react";
+import ChatBox from "./components/ChatBox";
+import ModelSelector from "./components/ModelSelector";
+import ProjectPanel from "./components/ProjectPanel";
+
+const App = () => {
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [projectName, setProjectName] = useState(null); // Add project name state
+
+  return (
+    <div className="app">
+      <ModelSelector onSelect={setSelectedModel} />
+      {selectedModel && (
+        <>
+          <ChatBox model={selectedModel} projectName={projectName} />
+          <ProjectPanel projectName={projectName} onSelect={setProjectName} />
+        </>
+      )}
+    </div>
+  );
+};
+
+export default App;
+</file>
+
+<file path="SPEC.md">
+Lyra App v2.0
+---
+created: 2026-01-15
+tags:
+---
+# Master System Design Spec: Project Lyra (Full Build)
+
+## 1. Hybrid Intelligence Layer (The "Brain")
+- **Dynamic Provider Switching:**
+  - The backend handles two primary providers: **Local (Ollama)** and **Cloud (OpenRouter)**.
+  - User can toggle between them in the UI. 
+  - **OpenRouter Logic:** Implement a `POST` wrapper that sends requests to `https://openrouter.ai/api/v1/chat/completions` using the user's stored API key.
+- **Ollama "Web Search" API:** - When the "Research" toggle is active, the app uses Ollama's native `/api/web_search` (v2025/2026 feature) to fetch facts before generating a response.
+ - Requires `OLLAMA_API_KEY` field in UI/Backend for cloud-augmented grounding.
+
+## 2. Integrated Context Systems
+- **Obsidian Vault:**
+  - **Service:** Recursive file-system watcher (Linux-based) on a user-defined directory.      
+  - **Context Injection:** On every prompt, search the last 10 `.md` files modified or perform a vector search (if indexed) to inject relevant genealogy or coding notes into the context window.
+- **Genealogy-Specific "Research Mode":**
+  - A specialized system prompt that instructs the AI to prioritize "Source Citations" and "Negative Evidence" (noting where information was *not* found).
+- **Snapshot/Recovery:**
+  - **State Capture:** Hook to save current active file paths, terminal working directories, and line numbers.     
+  - **Resumption:** AI generates a 3-bullet summary of the "Active Logic State" to eliminate re-orientation friction.
+
+## 3. VS Code & LAN Integration
+- **OpenAI-Compatible Endpoint:** - Implement a route `/v1/chat/completions` in the backend to enable integration with VSCode AI extensions. 
+- **LAN Multi-User Support:** - Listen on `0.0.0.0` for multi-workstation access. 
+  - Isolated storage: `backend/data/{username}/`.
+
+---
+
+## 4. Aesthetic & Ergonomic
+
+| Variable | HEX | Usage |
+| :--- | :--- | :--- |
+| **--bright-snow** | `#f8f9faff` | Primary content surface (high readability). |
+| **--graphite** | `#333333ff` | Primary text. |
+| **--brilliant-rose** | `#ff3aaeff` | Input borders, dividers, active glows. Never text background. |
+| **--saffron** | `#e8b923ff` | **Decorative Gold.** Thick accent lines (2px+), section dividers. |
+
+- **UI Physics:** 
+  - **Bubbles:** Light-filled with black text. Alignment (Left/Right) conveys role.
+  - **Metadata:** Timestamps are greyed and visually subordinate.
+  - **Not a dark theme:** Clean, light content planes with dark/neutral framing.
+
+## 5. Accuracy & Anti-Drift Protocols
+- **Verification Loop:** Every "Complex" request triggers a self-correction pass before being displayed in the UI. Mandatory 2-pass verification (Worker + Auditor) for all complex prompts.
+- **Reference-First Generation:** AI must list the "Sources Found" (from Obsidian or Web) at the top of the response before providing the answer.
+- **The "Multi-Pass" Check:** For high-intellect tasks, the app uses "Best-of-N" sampling—it generates 3 small logic paths and the backend "Aggregator" picks the most consistent one.
+- **Context Pinning:** Key facts (e.g., "Grandfather's birth year: 1892") are "pinned" to the system prompt so the AI cannot contradict them later in the thread.
+
+---
+
+## 6. Additional Features
+1. **Model Switcher:** Pulls local models from Ollama AND fetches a curated list from OpenRouter (e.g., Claude 3.5 Sonnet, DeepSeek V3).
+2. **Auto-Summary:** When a thread reaches 10 messages, the AI summarizes the "Status" to save context tokens.
+3. **Markdown Export:** A "Save to Vault" button that formats the current conversation and saves it directly into the user's Obsidian folder.
+4. **Scaffolding Engine:**
+  - Dedicated endpoint/prompt for generating full-stack project structures, directory trees, and `Makefile` or `CMakeLists.txt` instantly to bypass manual setup.
+5. **Genealogy Research Mode:**  
+  - Automated source parsing. User provides raw text; AI extracts names, dates, and locations into formatted citations (GEDCOM or Markdown) in the background.
+6. **DIY Parts Agent:** 
+  - Background scraping for component specs/pricing when DIY project keywords are detected.
+7. **Proton Bridge Integration:**  
+  - Connect to `127.0.0.1` via `node-imap`.      
+  - **Task Extraction:** AI scans incoming emails for action items and automatically populates the micro-task list.
+
+---
+
+## 7. Hardware Architecture (AMD ROCm)
+- **Primary Engine:** Ollama v0.14+ hosted on custom Linux desktop with following specs:
+  - AMD Ryzen 7 9800X3D 4.7 GHz 8-Core Processor
+  - Sapphire PULSE Radeon RX 7800 XT 16 GB Video Card
+  - MSI B850 GAMING PLUS WIFI ATX AM5 Motherboard
+  - TEAMGROUP T-Create Expert 32 GB (2 x 16 GB) DDR5-6000 CL30 Memory
+  - TEAMGROUP MP44L 2 TB M.2-2280 PCIe 4.0 X4 NVME Solid State Drive
+  - Thermaltake Toughpower GF1 (2024) 850 W 80+ Gold Certified Fully Modular ATX Power Supply
+- **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
+- **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
+</file>
+
+<file path="backend/package.json">
+{
+  "name": "lyra",
+  "version": "1.0.0",
+  "description": "",
+  "license": "MIT",
+  "author": "Liz Casler Loomans",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7"
+  }
+}
+</file>
+
+</files>
