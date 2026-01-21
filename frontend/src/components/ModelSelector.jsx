@@ -1,53 +1,59 @@
+// frontend/src/components/ModelSelector.jsx
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const ModelSelector = ({ onSelect }) => {
   const [models, setModels] = useState([]);
-  const [loading, setLoading] = useState(false); // Add loading state
+  const [status, setStatus] = useState(""); // Track loading status
 
   useEffect(() => {
     const fetchModels = async () => {
       try {
-        setLoading(true); // Set loading state to true before sending request
-        // Inside useEffect
         const response = await axios.get("/model/");
         if (response.data.ollama_tags) {
-          // Map the objects to just the names
-          const names = response.data.ollama_tags.map((m) => m.name);
-          setModels(names);
-        } else {
-          console.error(
-            "Invalid data format received from backend:",
-            response.data
+          // Ollama returns objects with a 'name' property
+          const names = response.data.ollama_tags.map((m) =>
+            typeof m === "string" ? m : m.name,
           );
+          setModels(names);
         }
       } catch (error) {
         console.error("Error fetching models:", error);
-      } finally {
-        setLoading(false); // Set loading state to false after receiving response or catching error
       }
     };
-
     fetchModels();
   }, []);
 
   const handleSelect = async (modelName) => {
     try {
-      await axios.post("/model/switch", { modelName }); // Call backend for model switching
+      setStatus("Waking up model on LAN...");
+      await axios.post("/model/switch", { modelName });
       onSelect(modelName);
+      setStatus("Ready");
+      setTimeout(() => setStatus(""), 3000);
     } catch (error) {
       console.error("Error switching models:", error);
+      setStatus("Error: Check LAN server");
     }
   };
 
   return (
-    <select onChange={(e) => handleSelect(e.target.value)} disabled={loading}>
-      {models.map((model) => (
-        <option key={model} value={model}>
-          {model}
-        </option>
-      ))}
-    </select>
+    <div className="model-selector">
+      <select
+        onChange={(e) => handleSelect(e.target.value)}
+        disabled={status.includes("Waking")}
+      >
+        <option value="">Select a Model</option>
+        {models.map((model) => (
+          <option key={model} value={model}>
+            {model}
+          </option>
+        ))}
+      </select>
+      {status && (
+        <span style={{ fontSize: "10px", marginLeft: "10px" }}>{status}</span>
+      )}
+    </div>
   );
 };
 

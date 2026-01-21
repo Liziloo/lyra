@@ -1,6 +1,6 @@
 # backend/routes/model.py
 from fastapi import APIRouter, HTTPException
-from provider_client import ProviderClient # Changed
+from provider_client import ProviderClient
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -10,20 +10,29 @@ class ModelSwitchRequest(BaseModel):
 
 @router.get("/")
 async def list_available_models():
+    """Fetches the list of models from the local Ollama server."""
     try:
-        # Use the updated client
-        ollama_models = await ProviderClient.list_models()
-        return {"success": True, "ollama_tags": ollama_models}
+        models = await ProviderClient.list_models()
+        # The frontend expects the key 'ollama_tags'
+        return {"success": True, "ollama_tags": models}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error listing models: {e}")
+        return {"success": False, "ollama_tags": []}
 
 @router.post("/switch")
 async def switch_model(request: ModelSwitchRequest):
+    # Check if it's a local model
     all_models = await ProviderClient.list_models()
     model_names = [m.get("name") for m in all_models]
     
-    if any(request.modelName in name for name in model_names):
-        return {"success": True, "message": f"Switched to {request.modelName}"}
+    # Check for exact match or 'tagless' match (e.g., 'codestral' vs 'codestral:latest')
+    is_local = any(request.modelName in name for name in model_names)
+
+    if is_local:
+        # INVOKE: This forces the LAN server to load the model into VRAM now
+        success = await ProviderClient.invoke_model(request.modelName)
+        if not success:
+            raise HTTPException(status_code=503, detail="LAN Ollama server failed to load the model.")
+        return {"success": True, "message": f"Model {request.modelName} is warmed up and ready."}
     
-    # If not in Ollama, we assume it's a cloud model from OpenRouter
     return {"success": True, "message": f"Using cloud model {request.modelName}"}

@@ -10,6 +10,9 @@ python-multipart   # Form data support
 # Security & Config
 python-dotenv      # To manage OPENROUTER_API_KEY from a .env file
 
+# Desktop GUI (Required for desktop.py)
+pywebview
+
 # SPEC Section 2: File Watching (Obsidian Vault Integration)
 watchdog           # Monitors project and vault directories for changes
 

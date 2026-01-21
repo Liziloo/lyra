@@ -96,64 +96,6 @@ SPEC.md
 <files>
 This section contains the contents of the repository's files.
 
-<file path="desktop.py">
-import webview
-import threading
-import uvicorn
-import sys
-import os
-from backend.main import app # Import your FastAPI app
-
-def start_backend():
-    # Runs the FastAPI server
-    uvicorn.run(app, host="127.0.0.1", port=3001)
-
-if __name__ == "__main__":
-    # 1. Start FastAPI in a background thread
-    t = threading.Thread(target=start_backend, daemon=True)
-    t.start()
-
-    # 2. Create the Desktop Window
-    # In development: point to your Vite dev server
-    # In production: point to 'frontend/dist/index.html'
-    url = "http://localhost:5173" # Change this to your Vite port
-    
-    window = webview.create_window(
-        'Lyra AI', 
-        url, 
-        width=1200, 
-        height=800,
-        background_color='#f8f9fa' # --bright-snow from your SPEC
-    )
-
-    # 3. Start the GUI
-    webview.start()
-</file>
-
-<file path="backend/routes/project.py">
-# backend/routes/project.py
-from fastapi import APIRouter, HTTPException
-from pathlib import Path
-import os
-
-router = APIRouter()
-PROJECTS_ROOT = Path(__file__).parent.parent.parent / "projects"
-
-@router.get("/{project_name}")
-async def list_project_files(project_name: str):
-    path = PROJECTS_ROOT / project_name / "code"
-    if not path.exists():
-        return []
-    return [f for f in os.listdir(path) if os.path.isfile(path / f)]
-
-@router.get("/{project_name}/{file_name}")
-async def get_file_content(project_name: str, file_name: str):
-    path = PROJECTS_ROOT / project_name / "code" / file_name
-    if not path.exists():
-        raise HTTPException(status_code=404)
-    return {"content": path.read_text(), "fileName": file_name}
-</file>
-
 <file path="backend/routes/session.py">
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -310,15 +252,34 @@ import httpx
 import json
 import os
 
-OLLAMA_URL = "http://localhost:11434/api"
+# Use environment variable for LAN support (e.g., http://192.168.1.50:11434)
+# .rstrip("/") prevents double slashes in URLs if the env var has a trailing slash
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 class ProviderClient:
     @staticmethod
+    async def invoke_model(model: str):
+        """
+        Explicitly tells the remote Ollama server to load the model into VRAM.
+        Sending a request to /api/generate with only the model name triggers this.
+        """
+        async with httpx.AsyncClient(timeout=None) as client:
+            try:
+                # This call will hang until the model is loaded into GPU memory on the LAN server
+                resp = await client.post(
+                    f"{OLLAMA_BASE_URL}/api/generate", 
+                    json={"model": model},
+                    timeout=120.0 
+                )
+                return resp.status_code == 200
+            except Exception as e:
+                print(f"Failed to invoke model {model} on {OLLAMA_BASE_URL}: {e}")
+                return False
+
+    @staticmethod
     async def get_response_stream(model: str, prompt: str, provider: str = "ollama", context: list = []):
-        # FIX: "yield from" is not allowed in async functions. 
-        # We must use "async for" to delegate to the sub-generators.
         if provider == "openrouter":
             async for chunk in ProviderClient._stream_openrouter(model, prompt):
                 yield chunk
@@ -330,14 +291,15 @@ class ProviderClient:
     async def _stream_ollama(model: str, prompt: str, context: list):
         payload = {"model": model, "prompt": prompt, "context": context, "stream": True}
         async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("POST", f"{OLLAMA_URL}/generate", json=payload) as response:
+            # Correct endpoint for the Ollama API
+            async with client.stream("POST", f"{OLLAMA_BASE_URL}/api/generate", json=payload) as response:
                 async for line in response.aiter_lines():
                     if line:
-                        # Standardize the data format for the frontend
                         yield f"data: {line}\n\n"
 
     @staticmethod
     async def _stream_openrouter(model: str, prompt: str):
+        """Streaming logic for OpenRouter (Cloud models)"""
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json"
@@ -355,42 +317,19 @@ class ProviderClient:
 
     @staticmethod
     async def list_models():
-        """Used by the model route to fetch local tags."""
+        """Fetches available local models from the LAN Ollama server."""
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.get(f"{OLLAMA_URL}/tags", timeout=5.0)
-                return resp.json().get("models", [])
-            except:
+                # Correct LAN path: http://<IP>:11434/api/tags
+                url = f"{OLLAMA_BASE_URL}/api/tags"
+                resp = await client.get(url, timeout=5.0)
+                
+                if resp.status_code == 200:
+                    return resp.json().get("models", [])
                 return []
-</file>
-
-<file path="backend/session_manager.py">
-import os
-import json
-import time
-from pathlib import Path
-
-class SessionManager:
-    def __init__(self, model_name: str):
-        self.model_name = model_name
-        self.session_dir = Path(__file__).parent.parent / "sessions" / model_name
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-        self.current_file = self.session_dir / "current_session.json"
-
-    def load_session(self):
-        if self.current_file.exists():
-            return json.loads(self.current_file.read_text())
-        return {"conversation": []}
-
-    def save_session(self, data):
-        self.current_file.write_text(json.dumps(data, indent=2))
-
-    def archive_session(self):
-        if self.current_file.exists():
-            timestamp = int(time.time())
-            archive_path = self.session_dir / f"session_{timestamp}.json"
-            os.rename(self.current_file, archive_path)
-            self.save_session({"conversation": []})
+            except Exception as e:
+                print(f"Error connecting to LAN Ollama at {OLLAMA_BASE_URL}: {e}")
+                return []
 </file>
 
 <file path="frontend/public/vite.svg">
@@ -547,24 +486,6 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-</file>
-
-<file path="frontend/vite.config.js">
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-// https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    proxy: {
-      "/chat": "http://localhost:3001",
-      "/model": "http://localhost:3001",
-      "/project": "http://localhost:3001",
-      "/session": "http://localhost:3001",
-    },
-  },
-});
 </file>
 
 <file path="legacy/routes/chat.js">
@@ -1077,6 +998,57 @@ PARAMETER top_k 40
 PARAMETER repeat_penalty 1.1
 </file>
 
+<file path="desktop.py">
+# desktop.py
+import webview
+import threading
+import uvicorn
+import socket
+import sys
+import os
+
+# 1. Get absolute paths
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.join(ROOT_DIR, "backend")
+
+# 2. Force Python to look in 'backend' first
+sys.path.insert(0, BACKEND_DIR)
+
+# 3. Import the app using a standard import
+try:
+    import main  # This looks for main.py inside BACKEND_DIR
+    app = main.app
+    print("✅ Backend successfully resolved.")
+except ImportError as e:
+    print(f"❌ Error: Could not find main.py in {BACKEND_DIR}")
+    print(f"Technical details: {e}")
+    sys.exit(1)
+
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
+def start_backend():
+    uvicorn.run(app, host="127.0.0.1", port=3001, log_level="info")
+
+if __name__ == "__main__":
+    # Start backend
+    t = threading.Thread(target=start_backend, daemon=True)
+    t.start()
+
+    # Determine URL
+    if is_port_in_use(5173):
+        print("🚀 Running in Dev Mode (Vite)")
+        url = "http://localhost:5173"
+    else:
+        print("📦 Running in Production Mode (Static)")
+        url = "http://127.0.0.1:3001"
+
+    # Launch
+    window = webview.create_window('Lyra AI v2.0', url, width=1200, height=900)
+    webview.start(gui='qt')
+</file>
+
 <file path="LICENSE.md">
 # MIT License
 
@@ -1105,43 +1077,10 @@ SOFTWARE.
 
 </file>
 
-<file path="backend/routes/chat.py">
-# backend/routes/chat.py
-from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
-from provider_client import ProviderClient
-from pydantic import BaseModel
-
-router = APIRouter()
-
-class ChatRequest(BaseModel):
-    input: str
-    model: str
-    projectName: str | None = None
-    fileContext: str | None = None  # Add this field
-    provider: str = "ollama"
-
-@router.post("/")
-async def chat_endpoint(request: ChatRequest):
-    # Combine the file content with the user's question
-    full_prompt = request.input
-    if request.fileContext:
-        full_prompt = f"Context from file:\n{request.fileContext}\n\nUser Question: {request.input}"
-
-    return StreamingResponse(
-        ProviderClient.get_response_stream(
-            request.model, 
-            full_prompt,  # Pass the combined prompt
-            provider=request.provider
-        ),
-        media_type="text/event-stream"
-    )
-</file>
-
 <file path="backend/routes/model.py">
 # backend/routes/model.py
 from fastapi import APIRouter, HTTPException
-from provider_client import ProviderClient # Changed
+from provider_client import ProviderClient
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -1149,67 +1088,85 @@ router = APIRouter()
 class ModelSwitchRequest(BaseModel):
     modelName: str
 
-@router.get("/")
-async def list_available_models():
-    try:
-        # Use the updated client
-        ollama_models = await ProviderClient.list_models()
-        return {"success": True, "ollama_tags": ollama_models}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @router.post("/switch")
 async def switch_model(request: ModelSwitchRequest):
+    # Check if it's a local model
     all_models = await ProviderClient.list_models()
     model_names = [m.get("name") for m in all_models]
     
-    if any(request.modelName in name for name in model_names):
-        return {"success": True, "message": f"Switched to {request.modelName}"}
+    # Check for exact match or 'tagless' match (e.g., 'codestral' vs 'codestral:latest')
+    is_local = any(request.modelName in name for name in model_names)
+
+    if is_local:
+        # INVOKE: This forces the LAN server to load the model into VRAM now
+        success = await ProviderClient.invoke_model(request.modelName)
+        if not success:
+            raise HTTPException(status_code=503, detail="LAN Ollama server failed to load the model.")
+        return {"success": True, "message": f"Model {request.modelName} is warmed up and ready."}
     
-    # If not in Ollama, we assume it's a cloud model from OpenRouter
     return {"success": True, "message": f"Using cloud model {request.modelName}"}
 </file>
 
-<file path="backend/main.py">
-# backend/main.py
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from routes import chat, session, model, project # New project route
-from provider_client import ProviderClient
-from fastapi.staticfiles import StaticFiles
+<file path="backend/routes/project.py">
+# backend/routes/project.py
+from fastapi import APIRouter, HTTPException
+from pathlib import Path
 import os
 
-app = FastAPI(title="Lyra API v2.0")
+router = APIRouter()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Default to a 'projects' folder in the user's home dir
+PROJECTS_ROOT = Path.home() / ".lyra_app" / "projects"
+PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
 
-app.include_router(chat.router, prefix="/chat")
-app.include_router(session.router, prefix="/session")
-app.include_router(model.router, prefix="/model")
-app.include_router(project.router, prefix="/project")
+@router.get("/{project_name}")
+async def list_project_files(project_name: str):
+    path = PROJECTS_ROOT / project_name
+    # Search for files recursively or in a 'code' subfolder
+    if not path.exists():
+        return []
+    
+    files = []
+    for root, dirs, filenames in os.walk(path):
+        for f in filenames:
+            # Get relative path for the UI
+            rel_path = os.path.relpath(os.path.join(root, f), path)
+            files.append(rel_path)
+    return files
+</file>
 
-# SPEC SECTION 3: VS Code Compatibility (OpenAI Format)
-@app.post("/v1/chat/completions")
-async def vscode_compatibility(request: Request):
-    body = await request.json()
-    model_name = body.get("model", "codestral")
-    # Extract last message
-    prompt = body.get("messages", [])[-1].get("content", "")
-    return StreamingResponse(
-        ProviderClient.get_response_stream(model_name, prompt),
-        media_type="text/event-stream"
-    )
+<file path="backend/session_manager.py">
+# backend/session_manager.py
+import json
+import time
+import os
+from pathlib import Path
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=3001)
+# Saves data to C:\Users\Name\.lyra_app or /home/name/.lyra_app
+APP_DATA_DIR = Path.home() / ".lyra_app"
+SESSIONS_DIR = APP_DATA_DIR / "sessions"
+
+class SessionManager:
+    def __init__(self, model_name: str):
+        self.model_name = model_name.replace(":", "_") # Windows doesn't like ':' in filenames
+        self.session_dir = SESSIONS_DIR / self.model_name
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.current_file = self.session_dir / "current_session.json"
+
+    def load_session(self):
+        if self.current_file.exists():
+            return json.loads(self.current_file.read_text())
+        return {"conversation": []}
+
+    def save_session(self, data):
+        self.current_file.write_text(json.dumps(data, indent=2))
+
+    def archive_session(self):
+        if self.current_file.exists():
+            timestamp = int(time.time())
+            archive_path = self.session_dir / f"session_{timestamp}.json"
+            os.rename(self.current_file, archive_path)
+            self.save_session({"conversation": []})
 </file>
 
 <file path="frontend/src/index.css">
@@ -1296,6 +1253,107 @@ input {
 }
 </file>
 
+<file path="frontend/vite.config.js">
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    proxy: {
+      "/chat": "http://localhost:3001",
+      "/model": "http://localhost:3001",
+      "/project": "http://localhost:3001",
+      "/session": "http://localhost:3001",
+    },
+  },
+});
+</file>
+
+<file path="backend/routes/chat.py">
+# backend/routes/chat.py
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from provider_client import ProviderClient
+from pydantic import BaseModel
+
+router = APIRouter()
+
+class ChatRequest(BaseModel):
+    input: str
+    model: str
+    projectName: str | None = None
+    fileContext: str | None = None  # Add this field
+    provider: str = "ollama"
+
+@router.post("/")
+async def chat_endpoint(request: ChatRequest):
+    # Combine the file content with the user's question
+    full_prompt = request.input
+    if request.fileContext:
+        full_prompt = f"Context from file:\n{request.fileContext}\n\nUser Question: {request.input}"
+
+    return StreamingResponse(
+        ProviderClient.get_response_stream(
+            request.model, 
+            full_prompt,  # Pass the combined prompt
+            provider=request.provider
+        ),
+        media_type="text/event-stream"
+    )
+</file>
+
+<file path="backend/main.py">
+# backend/main.py
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+from dotenv import load_dotenv
+
+from routes import chat, session, model, project 
+
+load_dotenv()
+
+app = FastAPI(title="Lyra AI")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# API Routes
+app.include_router(chat.router, prefix="/chat")
+app.include_router(session.router, prefix="/session")
+app.include_router(model.router, prefix="/model")
+app.include_router(project.router, prefix="/project")
+
+# --- FRONTEND SERVING ---
+# Get the absolute path to the 'frontend/dist' folder
+current_dir = Path(__file__).parent
+frontend_dist = current_dir.parent / "frontend" / "dist"
+
+if frontend_dist.exists():
+    # Serve static files (CSS, JS, Images)
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="assets")
+
+    # Catch-all route to serve index.html for the React SPA
+    @app.get("/{rest_of_path:path}")
+    async def serve_frontend(rest_of_path: str):
+        # If the request is for an API route that doesn't exist, this might catch it,
+        # but because routers are included above, they take priority.
+        return FileResponse(frontend_dist / "index.html")
+else:
+    @app.get("/")
+    async def root():
+        return {"message": "Frontend not built. Run 'npm run build' in the frontend folder."}
+</file>
+
 <file path="backend/requirements.txt">
 # Web Framework
 fastapi
@@ -1309,6 +1367,9 @@ python-multipart   # Form data support
 # Security & Config
 python-dotenv      # To manage OPENROUTER_API_KEY from a .env file
 
+# Desktop GUI (Required for desktop.py)
+pywebview
+
 # SPEC Section 2: File Watching (Obsidian Vault Integration)
 watchdog           # Monitors project and vault directories for changes
 
@@ -1319,63 +1380,6 @@ markdown           # To parse Obsidian notes for context injection
 pytest
 pytest-asyncio
 pytest-mock
-</file>
-
-<file path="frontend/src/components/ModelSelector.jsx">
-import React, { useState, useEffect } from "react";
-import axios from "axios";
-
-const ModelSelector = ({ onSelect }) => {
-  const [models, setModels] = useState([]);
-  const [loading, setLoading] = useState(false); // Add loading state
-
-  useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        setLoading(true); // Set loading state to true before sending request
-        // Inside useEffect
-        const response = await axios.get("/model/");
-        if (response.data.ollama_tags) {
-          // Map the objects to just the names
-          const names = response.data.ollama_tags.map((m) => m.name);
-          setModels(names);
-        } else {
-          console.error(
-            "Invalid data format received from backend:",
-            response.data
-          );
-        }
-      } catch (error) {
-        console.error("Error fetching models:", error);
-      } finally {
-        setLoading(false); // Set loading state to false after receiving response or catching error
-      }
-    };
-
-    fetchModels();
-  }, []);
-
-  const handleSelect = async (modelName) => {
-    try {
-      await axios.post("/model/switch", { modelName }); // Call backend for model switching
-      onSelect(modelName);
-    } catch (error) {
-      console.error("Error switching models:", error);
-    }
-  };
-
-  return (
-    <select onChange={(e) => handleSelect(e.target.value)} disabled={loading}>
-      {models.map((model) => (
-        <option key={model} value={model}>
-          {model}
-        </option>
-      ))}
-    </select>
-  );
-};
-
-export default ModelSelector;
 </file>
 
 <file path="frontend/src/components/ProjectPanel.jsx">
@@ -1427,6 +1431,149 @@ const ProjectPanel = ({ projectName, onSelect }) => {
 };
 
 export default ProjectPanel;
+</file>
+
+<file path="SPEC.md">
+Lyra App v2.0
+---
+created: 2026-01-15
+tags:
+---
+# Master System Design Spec: Project Lyra (Full Build)
+
+## 1. Hybrid Intelligence Layer (The "Brain")
+- **Dynamic Provider Switching:**
+  - The backend handles two primary providers: **Local (Ollama)** and **Cloud (OpenRouter)**.
+  - User can toggle between them in the UI. 
+  - **OpenRouter Logic:** Implement a `POST` wrapper that sends requests to `https://openrouter.ai/api/v1/chat/completions` using the user's stored API key.
+- **Ollama "Web Search" API:** - When the "Research" toggle is active, the app uses Ollama's native `/api/web_search` (v2025/2026 feature) to fetch facts before generating a response.
+ - Requires `OLLAMA_API_KEY` field in UI/Backend for cloud-augmented grounding.
+
+## 2. Integrated Context Systems
+- **Obsidian Vault:**
+  - **Service:** Recursive file-system watcher (Linux-based) on a user-defined directory.      
+  - **Context Injection:** On every prompt, search the last 10 `.md` files modified or perform a vector search (if indexed) to inject relevant genealogy or coding notes into the context window.
+- **Genealogy-Specific "Research Mode":**
+  - A specialized system prompt that instructs the AI to prioritize "Source Citations" and "Negative Evidence" (noting where information was *not* found).
+- **Snapshot/Recovery:**
+  - **State Capture:** Hook to save current active file paths, terminal working directories, and line numbers.     
+  - **Resumption:** AI generates a 3-bullet summary of the "Active Logic State" to eliminate re-orientation friction.
+
+## 3. VS Code & LAN Integration
+- **OpenAI-Compatible Endpoint:** - Implement a route `/v1/chat/completions` in the backend to enable integration with VSCode AI extensions. 
+- **LAN Multi-User Support:** - Listen on `0.0.0.0` for multi-workstation access. 
+  - Isolated storage: `backend/data/{username}/`.
+
+---
+
+## 4. Aesthetic & Ergonomic
+
+| Variable | HEX | Usage |
+| :--- | :--- | :--- |
+| **--bright-snow** | `#f8f9faff` | Primary content surface (high readability). |
+| **--graphite** | `#333333ff` | Primary text. |
+| **--brilliant-rose** | `#ff3aaeff` | Input borders, dividers, active glows. Never text background. |
+| **--saffron** | `#e8b923ff` | **Decorative Gold.** Thick accent lines (2px+), section dividers. |
+
+- **UI Physics:** 
+  - **Bubbles:** Light-filled with black text. Alignment (Left/Right) conveys role.
+  - **Metadata:** Timestamps are greyed and visually subordinate.
+  - **Not a dark theme:** Clean, light content planes with dark/neutral framing.
+
+## 5. Accuracy & Anti-Drift Protocols
+- **Verification Loop:** Every "Complex" request triggers a self-correction pass before being displayed in the UI. Mandatory 2-pass verification (Worker + Auditor) for all complex prompts.
+- **Reference-First Generation:** AI must list the "Sources Found" (from Obsidian or Web) at the top of the response before providing the answer.
+- **The "Multi-Pass" Check:** For high-intellect tasks, the app uses "Best-of-N" sampling—it generates 3 small logic paths and the backend "Aggregator" picks the most consistent one.
+- **Context Pinning:** Key facts (e.g., "Grandfather's birth year: 1892") are "pinned" to the system prompt so the AI cannot contradict them later in the thread.
+
+---
+
+## 6. Additional Features
+1. **Model Switcher:** Pulls local models from Ollama AND fetches a curated list from OpenRouter (e.g., Claude 3.5 Sonnet, DeepSeek V3).
+2. **Auto-Summary:** When a thread reaches 10 messages, the AI summarizes the "Status" to save context tokens.
+3. **Markdown Export:** A "Save to Vault" button that formats the current conversation and saves it directly into the user's Obsidian folder.
+4. **Scaffolding Engine:**
+  - Dedicated endpoint/prompt for generating full-stack project structures, directory trees, and `Makefile` or `CMakeLists.txt` instantly to bypass manual setup.
+5. **Genealogy Research Mode:**  
+  - Automated source parsing. User provides raw text; AI extracts names, dates, and locations into formatted citations (GEDCOM or Markdown) in the background.
+6. **DIY Parts Agent:** 
+  - Background scraping for component specs/pricing when DIY project keywords are detected.
+7. **Proton Bridge Integration:**  
+  - Connect to `127.0.0.1` via `node-imap`.      
+  - **Task Extraction:** AI scans incoming emails for action items and automatically populates the micro-task list.
+
+---
+
+## 7. Hardware Architecture (AMD ROCm)
+- **Primary Engine:** Ollama v0.14+ hosted on custom Linux desktop with following specs:
+  - AMD Ryzen 7 9800X3D 4.7 GHz 8-Core Processor
+  - Sapphire PULSE Radeon RX 7800 XT 16 GB Video Card
+  - MSI B850 GAMING PLUS WIFI ATX AM5 Motherboard
+  - TEAMGROUP T-Create Expert 32 GB (2 x 16 GB) DDR5-6000 CL30 Memory
+  - TEAMGROUP MP44L 2 TB M.2-2280 PCIe 4.0 X4 NVME Solid State Drive
+  - Thermaltake Toughpower GF1 (2024) 850 W 80+ Gold Certified Fully Modular ATX Power Supply
+- **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
+- **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
+</file>
+
+<file path="frontend/src/components/ModelSelector.jsx">
+// frontend/src/components/ModelSelector.jsx
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+
+const ModelSelector = ({ onSelect }) => {
+  const [models, setModels] = useState([]);
+  const [status, setStatus] = useState(""); // Track loading status
+
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const response = await axios.get("/model/");
+        if (response.data.ollama_tags) {
+          const names = response.data.ollama_tags.map((m) => m.name);
+          setModels(names);
+        }
+      } catch (error) {
+        console.error("Error fetching models:", error);
+      }
+    };
+    fetchModels();
+  }, []);
+
+  const handleSelect = async (modelName) => {
+    try {
+      setStatus("Waking up model on LAN...");
+      await axios.post("/model/switch", { modelName });
+      onSelect(modelName);
+      setStatus("Ready");
+      setTimeout(() => setStatus(""), 3000);
+    } catch (error) {
+      console.error("Error switching models:", error);
+      setStatus("Error: Check LAN server");
+    }
+  };
+
+  return (
+    <div className="model-selector">
+      <select
+        onChange={(e) => handleSelect(e.target.value)}
+        disabled={status.includes("Waking")}
+      >
+        <option value="">Select a Model</option>
+        {models.map((model) => (
+          <option key={model} value={model}>
+            {model}
+          </option>
+        ))}
+      </select>
+      {status && (
+        <span style={{ fontSize: "10px", marginLeft: "10px" }}>{status}</span>
+      )}
+    </div>
+  );
+};
+
+export default ModelSelector;
 </file>
 
 <file path="frontend/src/App.jsx">
@@ -1705,89 +1852,6 @@ __marimo__/
 .streamlit/secrets.toml
 
 repomix-output.xml
-</file>
-
-<file path="SPEC.md">
-Lyra App v2.0
----
-created: 2026-01-15
-tags:
----
-# Master System Design Spec: Project Lyra (Full Build)
-
-## 1. Hybrid Intelligence Layer (The "Brain")
-- **Dynamic Provider Switching:**
-  - The backend handles two primary providers: **Local (Ollama)** and **Cloud (OpenRouter)**.
-  - User can toggle between them in the UI. 
-  - **OpenRouter Logic:** Implement a `POST` wrapper that sends requests to `https://openrouter.ai/api/v1/chat/completions` using the user's stored API key.
-- **Ollama "Web Search" API:** - When the "Research" toggle is active, the app uses Ollama's native `/api/web_search` (v2025/2026 feature) to fetch facts before generating a response.
- - Requires `OLLAMA_API_KEY` field in UI/Backend for cloud-augmented grounding.
-
-## 2. Integrated Context Systems
-- **Obsidian Vault:**
-  - **Service:** Recursive file-system watcher (Linux-based) on a user-defined directory.      
-  - **Context Injection:** On every prompt, search the last 10 `.md` files modified or perform a vector search (if indexed) to inject relevant genealogy or coding notes into the context window.
-- **Genealogy-Specific "Research Mode":**
-  - A specialized system prompt that instructs the AI to prioritize "Source Citations" and "Negative Evidence" (noting where information was *not* found).
-- **Snapshot/Recovery:**
-  - **State Capture:** Hook to save current active file paths, terminal working directories, and line numbers.     
-  - **Resumption:** AI generates a 3-bullet summary of the "Active Logic State" to eliminate re-orientation friction.
-
-## 3. VS Code & LAN Integration
-- **OpenAI-Compatible Endpoint:** - Implement a route `/v1/chat/completions` in the backend to enable integration with VSCode AI extensions. 
-- **LAN Multi-User Support:** - Listen on `0.0.0.0` for multi-workstation access. 
-  - Isolated storage: `backend/data/{username}/`.
-
----
-
-## 4. Aesthetic & Ergonomic
-
-| Variable | HEX | Usage |
-| :--- | :--- | :--- |
-| **--bright-snow** | `#f8f9faff` | Primary content surface (high readability). |
-| **--graphite** | `#333333ff` | Primary text. |
-| **--brilliant-rose** | `#ff3aaeff` | Input borders, dividers, active glows. Never text background. |
-| **--saffron** | `#e8b923ff` | **Decorative Gold.** Thick accent lines (2px+), section dividers. |
-
-- **UI Physics:** 
-  - **Bubbles:** Light-filled with black text. Alignment (Left/Right) conveys role.
-  - **Metadata:** Timestamps are greyed and visually subordinate.
-  - **Not a dark theme:** Clean, light content planes with dark/neutral framing.
-
-## 5. Accuracy & Anti-Drift Protocols
-- **Verification Loop:** Every "Complex" request triggers a self-correction pass before being displayed in the UI. Mandatory 2-pass verification (Worker + Auditor) for all complex prompts.
-- **Reference-First Generation:** AI must list the "Sources Found" (from Obsidian or Web) at the top of the response before providing the answer.
-- **The "Multi-Pass" Check:** For high-intellect tasks, the app uses "Best-of-N" sampling—it generates 3 small logic paths and the backend "Aggregator" picks the most consistent one.
-- **Context Pinning:** Key facts (e.g., "Grandfather's birth year: 1892") are "pinned" to the system prompt so the AI cannot contradict them later in the thread.
-
----
-
-## 6. Additional Features
-1. **Model Switcher:** Pulls local models from Ollama AND fetches a curated list from OpenRouter (e.g., Claude 3.5 Sonnet, DeepSeek V3).
-2. **Auto-Summary:** When a thread reaches 10 messages, the AI summarizes the "Status" to save context tokens.
-3. **Markdown Export:** A "Save to Vault" button that formats the current conversation and saves it directly into the user's Obsidian folder.
-4. **Scaffolding Engine:**
-  - Dedicated endpoint/prompt for generating full-stack project structures, directory trees, and `Makefile` or `CMakeLists.txt` instantly to bypass manual setup.
-5. **Genealogy Research Mode:**  
-  - Automated source parsing. User provides raw text; AI extracts names, dates, and locations into formatted citations (GEDCOM or Markdown) in the background.
-6. **DIY Parts Agent:** 
-  - Background scraping for component specs/pricing when DIY project keywords are detected.
-7. **Proton Bridge Integration:**  
-  - Connect to `127.0.0.1` via `node-imap`.      
-  - **Task Extraction:** AI scans incoming emails for action items and automatically populates the micro-task list.
-
----
-
-## 7. Hardware Architecture (AMD ROCm)
-- **Primary Engine:** Ollama v0.14+ hosted on custom Linux desktop with following specs:
-  - AMD Ryzen 7 9800X3D 4.7 GHz 8-Core Processor
-  - Sapphire PULSE Radeon RX 7800 XT 16 GB Video Card
-  - MSI B850 GAMING PLUS WIFI ATX AM5 Motherboard
-  - TEAMGROUP T-Create Expert 32 GB (2 x 16 GB) DDR5-6000 CL30 Memory
-  - TEAMGROUP MP44L 2 TB M.2-2280 PCIe 4.0 X4 NVME Solid State Drive
-  - Thermaltake Toughpower GF1 (2024) 850 W 80+ Gold Certified Fully Modular ATX Power Supply
-- **Concurrency:** The backend must handle parallel requests to support the "Agent Loop" (Web Search + Local Reasoning).
-- **GPU Priority:** All inference requests should specify high GPU offloading to leverage the 9800X3D's speed and the 16GB frame buffer.
 </file>
 
 <file path="frontend/src/components/ChatBox.jsx">
