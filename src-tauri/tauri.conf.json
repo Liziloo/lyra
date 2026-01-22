@@ -1,22 +1,21 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lyra",
+  "productName": "lyra",
   "version": "0.1.0",
-  "identifier": "com.liz.lyra",
+  "identifier": "com.lyra.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "fullscreen": false,
-        "title": "Lyra",
+        "title": "Project Lyra",
+        "width": 1000,
+        "height": 800,
         "resizable": true,
-        "width": 800,
-        "height": 600
+        "fullscreen": false
       }
     ],
     "security": {
@@ -24,21 +23,20 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "appimage",
-    "linux": {
-      "appimage": {
-        "bundleMediaFramework": false,
-        "files": {}
-      },
-      "deb": {
-        "files": {}
-      },
-      "rpm": {
-        "epoch": 0,
-        "files": {},
-        "release": "1"
-      }
-    }
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "fs": {},
+    "dialog": {},
+    "http": {},
+    "path": {}
   }
 }
