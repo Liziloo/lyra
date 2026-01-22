@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 import { Message, Provider, Thread } from "./types";
 
 // Services & Hooks
-import { sendMessage } from "./services/llmService";
+import { getOllamaModels, sendMessage } from "./services/llmService";
 import { obsidianService } from "./services/obsidianService";
 import { useHardwareCheck } from "./hooks/useHardwareCheck";
 
@@ -31,6 +31,10 @@ const App = () => {
   const [inputText, setInputText] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const ollamaBaseUrl =
+    import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
+
   // Current Chat Thread
   const [thread, setThread] = useState<Thread>({
     id: uuidv4(),
@@ -42,7 +46,24 @@ const App = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { isOllamaOnline } = useHardwareCheck();
 
-  // --- 2. Persist Settings ---
+  // --- 2. Dynamic Model Refresh ---
+  useEffect(() => {
+    const refreshModels = async () => {
+      if (isOllamaOnline && activeProviderId === "ollama") {
+        const models = await getOllamaModels(ollamaBaseUrl);
+        setAvailableModels(models);
+
+        // If current selected model isn't in the new list,
+        // default to the first available model
+        if (models.length > 0 && !models.includes(selectedModel)) {
+          setSelectedModel(models[0]);
+        }
+      }
+    };
+    refreshModels();
+  }, [isOllamaOnline, activeProviderId, ollamaBaseUrl]);
+
+  // --- 3. Persist Settings ---
   useEffect(() => {
     localStorage.setItem("lyra_vault_path", vaultPath);
     localStorage.setItem("lyra_or_key", openRouterKey);
@@ -55,7 +76,7 @@ const App = () => {
     }
   }, [thread.messages]);
 
-  // --- 3. Orchestration Logic ---
+  // --- 4. Orchestration Logic ---
 
   const handlePickVault = async () => {
     const path = await obsidianService.pickVaultFolder();
@@ -78,18 +99,12 @@ const App = () => {
     setIsProcessing(true);
 
     try {
-      // Phase 2: Integrated Context Snap
-      // (Optionally reading notes right before sending if a flag is set,
-      // but for v0.1 we can just pass empty context unless "Read Recent Notes" was clicked)
-      const context = ""; // This would be populated by a separate "Snap" state if desired
-
       const provider: Provider = {
         id: activeProviderId,
         name: activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
         url:
           activeProviderId === "ollama"
-            ? (import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434") +
-              "/api/chat"
+            ? `${ollamaBaseUrl}/api/chat`
             : "https://openrouter.ai/api/v1/chat/completions",
         apiKey: activeProviderId === "openrouter" ? openRouterKey : "",
       };
@@ -98,7 +113,7 @@ const App = () => {
         provider,
         model: selectedModel,
         isGenealogyExpert: isGenealogyMode,
-        contextNotes: context,
+        contextNotes: "", // Pre-filled in text area by handleInjectContext
       });
 
       const aiMsg: Message = {
@@ -134,16 +149,16 @@ const App = () => {
     );
   };
 
-  // --- 4. Render Layout ---
   return (
     <div className="flex h-screen w-full bg-white text-graphite overflow-hidden font-sans">
       {/* Sidebar */}
       <aside className="w-80 border-r border-gray-200 flex flex-col p-6 bg-bright-snow/30 overflow-y-auto">
         <h1 className="text-2xl font-black mb-6 tracking-tighter text-graphite">
-          LYRA <span className="text-brilliant-rose">v0.1</span>
+          LYRA{" "}
+          <span className="text-brilliant-rose font-mono text-sm">v0.1</span>
         </h1>
 
-        <StatusBadge isOnline={isOllamaOnline} label="Local Core" />
+        <StatusBadge isOnline={isOllamaOnline} label="Workstation" />
 
         <div className="mt-8 space-y-2">
           <ControlCard
@@ -153,23 +168,41 @@ const App = () => {
             <select
               value={activeProviderId}
               onChange={(e) => setActiveProviderId(e.target.value as any)}
-              className="w-full p-2 rounded border border-gray-300 bg-white text-sm"
+              className="w-full p-2 rounded border border-gray-300 bg-white text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
             >
-              <option value="ollama">Ollama (Local)</option>
+              <option value="ollama">Ollama (Remote)</option>
               <option value="openrouter">OpenRouter (Cloud)</option>
             </select>
 
-            <input
-              type="text"
-              placeholder={
-                activeProviderId === "ollama"
-                  ? "Model (e.g. llama3.2)"
-                  : "OpenRouter Model ID"
-              }
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="w-full mt-2 p-2 rounded border border-gray-300 text-sm"
-            />
+            {/* DYNAMIC MODEL PICKER */}
+            {activeProviderId === "ollama" ? (
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full mt-2 p-2 rounded border border-gray-300 bg-white text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
+                disabled={!isOllamaOnline}
+              >
+                {availableModels.length > 0 ? (
+                  availableModels.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">
+                    {isOllamaOnline ? "Loading..." : "Ollama Offline"}
+                  </option>
+                )}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="OpenRouter Model ID"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full mt-2 p-2 rounded border border-gray-300 text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
+              />
+            )}
 
             {activeProviderId === "openrouter" && (
               <input
@@ -177,7 +210,7 @@ const App = () => {
                 placeholder="OpenRouter API Key"
                 value={openRouterKey}
                 onChange={(e) => setOpenRouterKey(e.target.value)}
-                className="w-full mt-2 p-2 rounded border border-gray-300 text-sm"
+                className="w-full mt-2 p-2 rounded border border-gray-300 text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
               />
             )}
           </ControlCard>
@@ -188,7 +221,7 @@ const App = () => {
           >
             <button
               onClick={handlePickVault}
-              className="w-full text-left p-2 rounded border border-gray-300 bg-white text-[10px] truncate mb-2 hover:bg-gray-50"
+              className="w-full text-left p-2 rounded border border-gray-300 bg-white text-[10px] truncate mb-2 hover:bg-gray-50 transition-colors"
             >
               {vaultPath || "Select Vault Folder..."}
             </button>
@@ -201,14 +234,16 @@ const App = () => {
           </ControlCard>
 
           <ControlCard title="Expertise Toggle">
-            <label className="flex items-center space-x-3 cursor-pointer">
+            <label className="flex items-center space-x-3 cursor-pointer group">
               <input
                 type="checkbox"
                 checked={isGenealogyMode}
                 onChange={(e) => setIsGenealogyMode(e.target.checked)}
                 className="w-4 h-4 accent-brilliant-rose"
               />
-              <span className="text-sm font-medium">Genealogy Expert</span>
+              <span className="text-sm font-medium group-hover:text-brilliant-rose transition-colors">
+                Genealogy Expert
+              </span>
             </label>
           </ControlCard>
         </div>
@@ -216,7 +251,6 @@ const App = () => {
 
       {/* Main Chat Area */}
       <main className="flex-grow flex flex-col relative">
-        {/* Chat Stream */}
         <div
           ref={scrollRef}
           className="flex-grow overflow-y-auto px-12 py-8 space-y-2"
@@ -224,9 +258,7 @@ const App = () => {
           {thread.messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
               <ChatDivider label="New Session" />
-              <p className="text-sm italic">
-                Ready for genealogy research or general tasks.
-              </p>
+              <p className="text-sm italic">Ready for input.</p>
             </div>
           )}
 
@@ -238,8 +270,8 @@ const App = () => {
           ))}
 
           {isProcessing && (
-            <div className="flex justify-start animate-pulse">
-              <div className="bg-bright-snow px-4 py-2 rounded-lg text-xs">
+            <div className="flex justify-start">
+              <div className="bg-bright-snow px-4 py-2 rounded-lg text-xs animate-pulse border border-gray-200">
                 Lyra is thinking...
               </div>
             </div>
@@ -257,12 +289,12 @@ const App = () => {
                   e.key === "Enter" && !e.shiftKey && handleSend()
                 }
                 placeholder="Ask Project Lyra..."
-                className="w-full p-4 pr-12 rounded-2xl border-2 border-graphite shadow-[4px_4px_0px_0px_rgba(51,51,51,1)] focus:outline-none focus:ring-2 focus:ring-brilliant-rose resize-none h-24"
+                className="w-full p-4 pr-12 rounded-2xl border-2 border-graphite shadow-[4px_4px_0px_0px_rgba(51,51,51,1)] focus:outline-none focus:ring-2 focus:ring-brilliant-rose resize-none h-24 transition-all"
               />
               <button
                 onClick={handleSend}
                 disabled={isProcessing}
-                className="absolute right-4 bottom-4 p-2 bg-brilliant-rose text-white rounded-xl hover:scale-110 transition-transform disabled:bg-gray-300"
+                className="absolute right-4 bottom-4 p-2 bg-brilliant-rose text-white rounded-xl hover:scale-110 active:scale-95 transition-transform disabled:bg-gray-300"
               >
                 <svg
                   className="w-5 h-5"
@@ -275,7 +307,7 @@ const App = () => {
                     strokeLinejoin="round"
                     strokeWidth="2"
                     d="M5 10l7-7m0 0l7 7m-7-7v18"
-                  ></path>
+                  />
                 </svg>
               </button>
             </div>
@@ -283,7 +315,7 @@ const App = () => {
             <button
               onClick={handleExport}
               title="Save to Vault"
-              className="p-4 rounded-2xl border-2 border-saffron text-saffron hover:bg-saffron hover:text-white transition-all font-bold text-xs"
+              className="p-4 rounded-2xl border-2 border-saffron text-saffron hover:bg-saffron hover:text-white transition-all font-bold text-xs whitespace-nowrap"
             >
               SAVE TO VAULT
             </button>

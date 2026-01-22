@@ -10,10 +10,21 @@
     "fs:allow-read-file",
     "fs:allow-write-file",
     "fs:allow-stat",
+    "http:allow-fetch",
+    "http:allow-fetch-read-body",
+    "http:default",
     {
-      "identifier": "http:default",
+      "identifier": "http:allow-fetch",
       "allow": [
+        { "url": "http://192.168.2.86:11434/*" },
         { "url": "http://192.168.2.86:11434/**" },
+        { "url": "http://192.168.2.86:11434/api/tags" },
+        { "url": "http://192.168.2.86:11434/api/chat" },
+        { "url": "http://localhost:11434/*" },
+        { "url": "http://localhost:11434/**" },
+        { "url": "http://localhost:11434/api/tags" },
+        { "url": "http://localhost:11434/api/chat" },
+        { "url": "https://openrouter.ai/api/v1/*" },
         { "url": "https://openrouter.ai/api/v1/**" }
       ]
     },

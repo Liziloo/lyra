@@ -75,3 +75,20 @@ export const sendMessage = async (
     throw error;
   }
 };
+
+export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
+  try {
+    const response = await fetch(`${baseUrl}/api/tags`, {
+      method: "GET",
+    });
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as { models: { name: string }[] };
+    // Extract just the names (e.g., "llama3.2:latest")
+    return data.models.map((m) => m.name);
+  } catch (error) {
+    console.error("Failed to fetch Ollama models:", error);
+    return [];
+  }
+};

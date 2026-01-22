@@ -1,17 +1,18 @@
 {
-  "productName": "lyra",
+  "productName": "Lyra",
   "version": "0.1.0",
   "identifier": "com.lyra.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Project Lyra",
+        "label": "main",
+        "title": "Lyra",
         "width": 1000,
         "height": 800,
         "resizable": true,
@@ -35,8 +36,8 @@
   },
   "plugins": {
     "fs": {},
-    "dialog": {},
-    "http": {},
-    "path": {}
+    "dialog": null,
+    "http": null,
+    "opener": null
   }
 }
