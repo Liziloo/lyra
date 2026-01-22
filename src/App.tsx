@@ -17,6 +17,7 @@ import { ControlCard } from "./components/sidebar/ControlCard";
 
 const App = () => {
   // --- 1. State Management ---
+  const [contextSnap, setContextSnap] = useState<string>("");
   const [vaultPath, setVaultPath] = useState<string>(
     localStorage.getItem("lyra_vault_path") || "",
   );
@@ -113,7 +114,7 @@ const App = () => {
         provider,
         model: selectedModel,
         isGenealogyExpert: isGenealogyMode,
-        contextNotes: "", // Pre-filled in text area by handleInjectContext
+        contextNotes: contextSnap, // Pass the snap here!
       });
 
       const aiMsg: Message = {
@@ -128,6 +129,8 @@ const App = () => {
         messages: [...prev.messages, aiMsg],
         updatedAt: new Date(),
       }));
+
+      setContextSnap(""); // Clear snap after use
     } catch (err: any) {
       alert(`Error: ${err.message}`);
     } finally {
@@ -144,9 +147,8 @@ const App = () => {
   const handleInjectContext = async () => {
     if (!vaultPath) return alert("Select vault first");
     const notes = await obsidianService.getRecentNotesContext(vaultPath);
-    setInputText(
-      (prev) => `Context Snap:\n${notes}\n---\nMy Question: ${prev}`,
-    );
+    setContextSnap(notes); // Store it silently
+    alert("Context Snapped! (Top 5 notes added to next message)");
   };
 
   return (
