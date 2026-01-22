@@ -1,8 +1,9 @@
+import { fetch } from "@tauri-apps/plugin-http";
 import { Message, Provider } from "../types";
 
-interface LLMOptions {
+export interface LLMOptions {
   provider: Provider;
-  model: string; // The specific model ID (e.g., 'llama3.2' or 'gpt-4o')
+  model: string;
   isGenealogyExpert: boolean;
   contextNotes: string;
 }
@@ -13,20 +14,16 @@ export const sendMessage = async (
 ): Promise<string> => {
   const { provider, model, isGenealogyExpert, contextNotes } = options;
 
-  // 1. Construct the System Message
-  let systemContent = "You are a helpful AI assistant.";
-  if (isGenealogyExpert) {
-    systemContent =
-      "You are a genealogy expert. Cite sources and note missing evidence.";
-  }
+  // 1. Construct System Message
+  let systemContent = isGenealogyExpert
+    ? "You are a genealogy expert. Cite sources and note missing evidence."
+    : "You are a helpful AI assistant.";
 
-  // Inject Obsidian Context if available
   if (contextNotes) {
     systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
   }
 
-  // 2. Map UI Messages to API format (text -> content)
-  // We prepend the system prompt as the first message
+  // 2. Map messages to API format
   const apiMessages = [
     { role: "system", content: systemContent },
     ...messages.map((m) => ({
@@ -35,8 +32,13 @@ export const sendMessage = async (
     })),
   ];
 
-  // 3. Prepare Request
-  const isOllama = provider.url.includes("11434");
+  const isOllama = provider.url.includes("11434") || provider.id === "ollama";
+
+  const body = JSON.stringify({
+    model: model,
+    messages: apiMessages,
+    stream: false,
+  });
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -46,19 +48,8 @@ export const sendMessage = async (
     headers["Authorization"] = `Bearer ${provider.apiKey}`;
   }
 
-  // OpenRouter specific headers (Optional but recommended)
-  if (provider.url.includes("openrouter.ai")) {
-    headers["HTTP-Referer"] = "https://github.com/project-lyra";
-    headers["X-Title"] = "Project Lyra";
-  }
-
-  const body = JSON.stringify({
-    model: model,
-    messages: apiMessages,
-    stream: false, // Prototype v0.1 uses non-streaming for simplicity
-  });
-
   try {
+    // Use Tauri's fetch to bypass CORS and use native networking
     const response = await fetch(provider.url, {
       method: "POST",
       headers,
@@ -66,20 +57,17 @@ export const sendMessage = async (
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      const errorData = (await response.json().catch(() => ({}))) as any;
       throw new Error(
         errorData.error?.message || `API Error: ${response.status}`,
       );
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as any;
 
-    // 4. Handle differing response schemas
     if (isOllama) {
-      // Ollama response: { message: { content: "..." } }
       return data.message.content;
     } else {
-      // OpenRouter/OpenAI response: { choices: [ { message: { content: "..." } } ] }
       return data.choices[0].message.content;
     }
   } catch (error) {
@@ -87,4 +75,3 @@ export const sendMessage = async (
     throw error;
   }
 };
-export type { LLMOptions };
