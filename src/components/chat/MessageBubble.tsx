@@ -1,31 +1,21 @@
 import React from "react";
 import { Message } from "../../types/index";
 
-interface MessageBubbleProps {
-  message: Message;
-}
-
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
+export const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
   const isUser = message.role === "user";
 
   return (
-    <div
-      className={`flex w-full mb-4 ${isUser ? "justify-end" : "justify-start"}`}
-    >
+    <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] px-4 py-3 rounded-2xl shadow-sm leading-relaxed ${
+        className={`max-w-[80%] px-8 py-5 rounded-[2.5rem] leading-relaxed text-sm font-medium ${
           isUser
-            ? "bg-white border-2 border-graphite text-graphite rounded-tr-none"
-            : "bg-bright-snow text-graphite border border-gray-200 rounded-tl-none"
+            ? "bg-graphite text-bright-snow border-2 border-saffron rounded-tr-none shadow-lg"
+            : "bg-brilliant-rose text-white rounded-tl-none shadow-[0_10px_30px_rgba(255,58,174,0.3)]"
         }`}
       >
-        <div className="text-sm whitespace-pre-wrap font-sans">
-          {message.text}
-        </div>
+        <div className="whitespace-pre-wrap">{message.text}</div>
         <div
-          className={`text-[10px] mt-1 opacity-50 font-mono ${
-            isUser ? "text-right" : "text-left"
-          }`}
+          className={`text-[9px] mt-2 font-black uppercase tracking-widest opacity-60 ${isUser ? "text-saffron" : "text-bright-snow"}`}
         >
           {new Date(message.timestamp).toLocaleTimeString([], {
             hour: "2-digit",

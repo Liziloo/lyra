@@ -59,6 +59,7 @@ src/
   services/
     llmService.ts
     obsidianService.ts
+    projectService.ts
   styles/
     App.css
   types/
@@ -106,6 +107,39 @@ vite.config.ts
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="src/services/projectService.ts">
+import { readDir } from "@tauri-apps/plugin-fs";
+
+export const projectService = {
+  async scanProject(path: string, depth = 0): Promise<string> {
+    if (depth > 2) return ""; // Limit depth for prototype performance
+    try {
+      const entries = await readDir(path);
+      let structure = "";
+      for (const entry of entries) {
+        if (
+          entry.name.startsWith(".") ||
+          entry.name === "node_modules" ||
+          entry.name === "target"
+        )
+          continue;
+        const indent = "  ".repeat(depth);
+        structure += `${indent}${entry.isDirectory ? "📁" : "📄"} ${entry.name}\n`;
+        if (entry.isDirectory) {
+          structure += await this.scanProject(
+            `${path}/${entry.name}`,
+            depth + 1,
+          );
+        }
+      }
+      return structure;
+    } catch (e) {
+      return "[Error scanning directory]";
+    }
+  },
+};
+</file>
 
 <file path="public/tauri.svg">
 <svg width="206" height="231" viewBox="0 0 206 231" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -245,43 +279,6 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
 };
 </file>
 
-<file path="src/hooks/useHardwareCheck.ts">
-// src/hooks/useHardwareCheck.ts
-import { useState, useEffect } from "react";
-import { fetch } from "@tauri-apps/plugin-http";
-
-export const useHardwareCheck = (intervalMs: number = 5000) => {
-  const [isOllamaOnline, setIsOllamaOnline] = useState(false);
-
-  // Clean the URL: remove whitespace and trailing slashes
-  const rawUrl = import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
-  const baseUrl = rawUrl.trim().replace(/\/+$/, "");
-
-  useEffect(() => {
-    const check = async () => {
-      try {
-        // Use the exact endpoint for the heartbeat
-        const response = await fetch(`${baseUrl}/api/tags`, {
-          method: "GET",
-          connectTimeout: 2000,
-        });
-
-        // Even a 404 from Ollama means the server is reachable
-        setIsOllamaOnline(response.ok || response.status === 404);
-      } catch (err) {
-        setIsOllamaOnline(false);
-      }
-    };
-
-    check();
-    const id = setInterval(check, intervalMs);
-    return () => clearInterval(id);
-  }, [baseUrl, intervalMs]);
-
-  return { isOllamaOnline };
-};
-</file>
-
 <file path="src/styles/App.css">
 @import "tailwindcss";
 
@@ -290,6 +287,31 @@ export const useHardwareCheck = (intervalMs: number = 5000) => {
   --color-graphite: #333333ff;
   --color-brilliant-rose: #ff3aaeff;
   --color-saffron: #e8b923ff;
+  
+  --border-heavy: 4px;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-graphite font-sans;
+  }
+}
+
+/* The "Buckle" Effect */
+.hardware-card {
+  @apply bg-white transition-all;
+  border: var(--border-heavy) solid var(--color-graphite);
+  box-shadow: 6px 6px 0px 0px var(--color-saffron);
+}
+
+.hardware-card:hover {
+  box-shadow: 4px 4px 0px 0px var(--color-brilliant-rose);
+}
+
+.heavy-input {
+  @apply bg-white p-4 outline-none;
+  border: var(--border-heavy) solid var(--color-graphite);
+  box-shadow: 4px 4px 0px 0px var(--color-graphite);
 }
 </file>
 
@@ -380,100 +402,45 @@ fn main() {
 }
 </file>
 
-<file path="src/services/llmService.ts">
+<file path="src/hooks/useHardwareCheck.ts">
+import { useState, useEffect } from "react";
 import { fetch } from "@tauri-apps/plugin-http";
-import { Message, Provider } from "../types";
 
-export interface LLMOptions {
-  provider: Provider;
-  model: string;
-  isGenealogyExpert: boolean;
-  contextNotes: string;
-}
+export const useHardwareCheck = (intervalMs: number = 5000) => {
+  const [isOllamaOnline, setIsOllamaOnline] = useState(false);
+  const rawUrl = import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
+  const baseUrl = rawUrl.trim().replace(/\/+$/, "");
 
-export const sendMessage = async (
-  messages: Message[],
-  options: LLMOptions,
-): Promise<string> => {
-  const { provider, model, isGenealogyExpert, contextNotes } = options;
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/api/tags`, {
+          method: "GET",
+          connectTimeout: 2000,
+        });
 
-  // 1. Construct System Message
-  let systemContent = isGenealogyExpert
-    ? "You are a genealogy expert. Cite sources and note missing evidence."
-    : "You are a helpful AI assistant.";
+        if (response.ok || response.status === 404) {
+          setIsOllamaOnline(true);
+        } else {
+          console.warn(
+            "Ollama responded but with error status:",
+            response.status,
+          );
+          setIsOllamaOnline(false);
+        }
+      } catch (err: any) {
+        // THIS LOG IS THE MOST IMPORTANT DEBUGGING STEP:
+        console.error("HARDWARE CHECK FAILED:", err);
+        setIsOllamaOnline(false);
+      }
+    };
 
-  if (contextNotes) {
-    systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
-  }
+    check();
+    const id = setInterval(check, intervalMs);
+    return () => clearInterval(id);
+  }, [baseUrl, intervalMs]);
 
-  // 2. Map messages to API format
-  const apiMessages = [
-    { role: "system", content: systemContent },
-    ...messages.map((m) => ({
-      role: m.role,
-      content: m.text,
-    })),
-  ];
-
-  const isOllama = provider.url.includes("11434") || provider.id === "ollama";
-
-  const body = JSON.stringify({
-    model: model,
-    messages: apiMessages,
-    stream: false,
-  });
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (provider.apiKey) {
-    headers["Authorization"] = `Bearer ${provider.apiKey}`;
-  }
-
-  try {
-    // Use Tauri's fetch to bypass CORS and use native networking
-    const response = await fetch(provider.url, {
-      method: "POST",
-      headers,
-      body,
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json().catch(() => ({}))) as any;
-      throw new Error(
-        errorData.error?.message || `API Error: ${response.status}`,
-      );
-    }
-
-    const data = (await response.json()) as any;
-
-    if (isOllama) {
-      return data.message.content;
-    } else {
-      return data.choices[0].message.content;
-    }
-  } catch (error) {
-    console.error("LLM Service Error:", error);
-    throw error;
-  }
-};
-
-export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
-  try {
-    const response = await fetch(`${baseUrl}/api/tags`, {
-      method: "GET",
-    });
-
-    if (!response.ok) return [];
-
-    const data = (await response.json()) as { models: { name: string }[] };
-    // Extract just the names (e.g., "llama3.2:latest")
-    return data.models.map((m) => m.name);
-  } catch (error) {
-    console.error("Failed to fetch Ollama models:", error);
-    return [];
-  }
+  return { isOllamaOnline };
 };
 </file>
 
@@ -582,36 +549,6 @@ export type { Message, Provider, Thread };
 }
 </file>
 
-<file path="src-tauri/capabilities/desktop.json">
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "desktop-capability",
-  "description": "Project Lyra Core Permissions",
-  "windows": ["main"],
-  "permissions": [
-    "core:path:allow-join",
-    "dialog:allow-open",
-    "fs:allow-read-dir",
-    "fs:allow-read-file",
-    "fs:allow-write-file",
-    "fs:allow-stat",
-    "http:allow-fetch",
-    "http:allow-fetch-read-body",
-    {
-      "identifier": "http:allow-fetch",
-      "allow": [
-        { "url": "http://192.168.2.86:11434/**" },
-        { "url": "https://openrouter.ai/api/v1/**" }
-      ]
-    },
-    {
-      "identifier": "fs:scope",
-      "allow": [{ "path": "$HOME/**" }]
-    }
-  ]
-}
-</file>
-
 <file path="vite.config.ts">
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -651,6 +588,103 @@ export default defineConfig(async () => ({
 }));
 </file>
 
+<file path="src/services/llmService.ts">
+import { fetch } from "@tauri-apps/plugin-http";
+import { Message, Provider } from "../types";
+
+export interface LLMOptions {
+  provider: Provider;
+  model: string;
+  isGenealogyExpert: boolean;
+  contextNotes: string;
+}
+
+export const sendMessage = async (
+  messages: Message[],
+  options: LLMOptions,
+): Promise<string> => {
+  const { provider, model, isGenealogyExpert, contextNotes } = options;
+
+  // 1. Construct System Message
+  let systemContent = isGenealogyExpert
+    ? "You are a genealogy expert. Cite sources and note missing evidence."
+    : "You are a helpful AI assistant.";
+
+  if (contextNotes) {
+    systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
+  }
+
+  // 2. Map messages to API format
+  const apiMessages = [
+    { role: "system", content: systemContent },
+    ...messages.map((m) => ({
+      role: m.role,
+      content: m.text,
+    })),
+  ];
+
+  const isOllama = provider.url.includes("11434") || provider.id === "ollama";
+
+  const body = JSON.stringify({
+    model: model,
+    messages: apiMessages,
+    stream: false,
+  });
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  if (provider.apiKey) {
+    headers["Authorization"] = `Bearer ${provider.apiKey}`;
+  }
+
+  try {
+    // Use Tauri's fetch to bypass CORS and use native networking
+    const response = await fetch(provider.url, {
+      method: "POST",
+      headers,
+      body,
+    });
+
+    if (!response.ok) {
+      const errorData = (await response.json().catch(() => ({}))) as any;
+      throw new Error(
+        errorData.error?.message || `API Error: ${response.status}`,
+      );
+    }
+
+    const data = (await response.json()) as any;
+
+    if (isOllama) {
+      return data.message.content;
+    } else {
+      return data.choices[0].message.content;
+    }
+  } catch (error) {
+    console.error("LLM Service Error:", error);
+    throw error;
+  }
+};
+
+export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
+  try {
+    const response = await fetch(`${baseUrl}/api/tags`, {
+      method: "GET",
+    });
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as { models: { name: string }[] };
+    // Extract just the names (e.g., "llama3.2:latest")
+    return data.models.map((m) => m.name);
+  } catch (error) {
+    console.error("Failed to fetch Ollama models:", error);
+    return [];
+  }
+};
+</file>
+
 <file path="src/main.tsx">
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -664,6 +698,55 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 );
 </file>
 
+<file path="src-tauri/capabilities/desktop.json">
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-capability",
+  "description": "Project Lyra Core Permissions",
+  "windows": ["main"],
+  "permissions": [
+    "core:path:allow-join",
+    "dialog:allow-open",
+    "fs:allow-read-dir",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-stat",
+    "http:allow-fetch",
+    "http:allow-fetch-read-body",
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [
+        { "url": "http://192.168.2.86:11434/*" },
+        { "url": "http://192.168.2.86:11434/**" },
+        { "url": "http://192.168.2.86:11434/api/tags" },
+        { "url": "http://192.168.2.86:11434/api/chat" },
+        { "url": "http://localhost:11434/*" },
+        { "url": "http://localhost:11434/**" },
+        { "url": "http://localhost:11434/api/tags" },
+        { "url": "http://localhost:11434/api/chat" },
+        { "url": "https://openrouter.ai/api/v1/*" },
+        { "url": "https://openrouter.ai/api/v1/**" }
+      ]
+    },
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$HOME/**" }]
+    }
+  ]
+}
+</file>
+
+<file path="README.md">
+# Tauri + React + Typescript
+
+This template should help get you started developing with Tauri, React and Typescript in Vite.
+
+## Recommended IDE Setup
+
+- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+</file>
+
 <file path="src-tauri/src/lib.rs">
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -675,11 +758,9 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::new().build())
-        .plugin(tauri_plugin_path::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {}))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -720,7 +801,6 @@ tauri-plugin-notification = "2"
 tauri-plugin-http = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
-tauri-plugin-path = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
@@ -734,7 +814,7 @@ tauri-plugin-window-state = "2"
   "identifier": "com.lyra.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -766,21 +846,41 @@ tauri-plugin-window-state = "2"
   },
   "plugins": {
     "fs": {},
-    "dialog": {},
-    "http": {},
-    "path": {}
+    "dialog": null,
+    "http": null,
+    "opener": null
   }
 }
 </file>
 
-<file path="README.md">
-# Tauri + React + Typescript
+<file path=".gitignore">
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+node_modules
+dist
+dist-ssr
+*.local
 
-## Recommended IDE Setup
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+
+.env
 </file>
 
 <file path="src/App.tsx">
@@ -793,6 +893,7 @@ import { Message, Provider, Thread } from "./types";
 // Services & Hooks
 import { getOllamaModels, sendMessage } from "./services/llmService";
 import { obsidianService } from "./services/obsidianService";
+import { projectService } from "./services/projectService"; // Added
 import { useHardwareCheck } from "./hooks/useHardwareCheck";
 
 // Components
@@ -803,6 +904,10 @@ import { ControlCard } from "./components/sidebar/ControlCard";
 
 const App = () => {
   // --- 1. State Management ---
+  const [sidebarWidth, setSidebarWidth] = useState(320); // Resizing Sidebar
+  const isResizing = useRef(false);
+
+  const [contextSnap, setContextSnap] = useState<string>("");
   const [vaultPath, setVaultPath] = useState<string>(
     localStorage.getItem("lyra_vault_path") || "",
   );
@@ -810,6 +915,8 @@ const App = () => {
     localStorage.getItem("lyra_or_key") || "",
   );
   const [isGenealogyMode, setIsGenealogyMode] = useState(false);
+  const [isCodingMode, setIsCodingMode] = useState(false); // Coding Mode toggle
+
   const [activeProviderId, setActiveProviderId] = useState<
     "ollama" | "openrouter"
   >("ollama");
@@ -832,15 +939,29 @@ const App = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { isOllamaOnline } = useHardwareCheck();
 
-  // --- 2. Dynamic Model Refresh ---
+  // --- 2. Sidebar Resize Handlers ---
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      setSidebarWidth(Math.max(250, Math.min(600, e.clientX)));
+    };
+    const handleMouseUp = () => {
+      isResizing.current = false;
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  // --- 3. Logic Handlers ---
   useEffect(() => {
     const refreshModels = async () => {
       if (isOllamaOnline && activeProviderId === "ollama") {
         const models = await getOllamaModels(ollamaBaseUrl);
         setAvailableModels(models);
-
-        // If current selected model isn't in the new list,
-        // default to the first available model
         if (models.length > 0 && !models.includes(selectedModel)) {
           setSelectedModel(models[0]);
         }
@@ -849,24 +970,32 @@ const App = () => {
     refreshModels();
   }, [isOllamaOnline, activeProviderId, ollamaBaseUrl]);
 
-  // --- 3. Persist Settings ---
   useEffect(() => {
     localStorage.setItem("lyra_vault_path", vaultPath);
     localStorage.setItem("lyra_or_key", openRouterKey);
   }, [vaultPath, openRouterKey]);
 
-  // Auto-scroll chat
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [thread.messages]);
 
-  // --- 4. Orchestration Logic ---
-
   const handlePickVault = async () => {
     const path = await obsidianService.pickVaultFolder();
     if (path) setVaultPath(path);
+  };
+
+  const handleScanCodebase = async () => {
+    const path = await obsidianService.pickVaultFolder(); // Reuse folder picker
+    if (path) {
+      const map = await projectService.scanProject(path);
+      setContextSnap(`[CODEBASE SCAN OF ${path}]\n${map}`);
+      setIsCodingMode(true);
+      alert(
+        "Codebase scanned. Lyra now has your project structure in context.",
+      );
+    }
   };
 
   const handleSend = async () => {
@@ -899,7 +1028,7 @@ const App = () => {
         provider,
         model: selectedModel,
         isGenealogyExpert: isGenealogyMode,
-        contextNotes: "", // Pre-filled in text area by handleInjectContext
+        contextNotes: contextSnap,
       });
 
       const aiMsg: Message = {
@@ -908,12 +1037,13 @@ const App = () => {
         text: aiResponseText,
         timestamp: new Date(),
       };
-
       setThread((prev) => ({
         ...prev,
         messages: [...prev.messages, aiMsg],
         updatedAt: new Date(),
       }));
+      setContextSnap("");
+      setIsCodingMode(false);
     } catch (err: any) {
       alert(`Error: ${err.message}`);
     } finally {
@@ -930,42 +1060,40 @@ const App = () => {
   const handleInjectContext = async () => {
     if (!vaultPath) return alert("Select vault first");
     const notes = await obsidianService.getRecentNotesContext(vaultPath);
-    setInputText(
-      (prev) => `Context Snap:\n${notes}\n---\nMy Question: ${prev}`,
-    );
+    setContextSnap(notes);
+    alert("Context Snapped! (Top 5 notes added to next message)");
   };
 
   return (
     <div className="flex h-screen w-full bg-white text-graphite overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className="w-80 border-r border-gray-200 flex flex-col p-6 bg-bright-snow/30 overflow-y-auto">
-        <h1 className="text-2xl font-black mb-6 tracking-tighter text-graphite">
+      {/* SIDEBAR: FIXED WIDTH PREVENTS SQUISHING */}
+      <aside
+        style={{ width: sidebarWidth }}
+        className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 bg-bright-snow/30 overflow-y-auto"
+      >
+        <h1 className="text-4xl font-black italic mb-6 tracking-tighter text-graphite">
           LYRA{" "}
-          <span className="text-brilliant-rose font-mono text-sm">v0.1</span>
+          <span className="text-brilliant-rose text-lg not-italic">v0.1</span>
         </h1>
 
         <StatusBadge isOnline={isOllamaOnline} label="Workstation" />
 
-        <div className="mt-8 space-y-2">
-          <ControlCard
-            title="Direct Brain"
-            description="Select your intelligence provider"
-          >
+        <div className="mt-8 space-y-4">
+          <ControlCard title="Direct Brain" description="AI Provider">
             <select
               value={activeProviderId}
               onChange={(e) => setActiveProviderId(e.target.value as any)}
-              className="w-full p-2 rounded border border-gray-300 bg-white text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
+              className="w-full p-2 border-2 border-graphite bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-brilliant-rose"
             >
               <option value="ollama">Ollama (Remote)</option>
               <option value="openrouter">OpenRouter (Cloud)</option>
             </select>
 
-            {/* DYNAMIC MODEL PICKER */}
             {activeProviderId === "ollama" ? (
               <select
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full mt-2 p-2 rounded border border-gray-300 bg-white text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
+                className="w-full mt-2 p-2 border-2 border-graphite bg-white font-bold text-sm outline-none disabled:opacity-50"
                 disabled={!isOllamaOnline}
               >
                 {availableModels.length > 0 ? (
@@ -976,44 +1104,40 @@ const App = () => {
                   ))
                 ) : (
                   <option value="">
-                    {isOllamaOnline ? "Loading..." : "Ollama Offline"}
+                    {isOllamaOnline ? "Loading..." : "Offline"}
                   </option>
                 )}
               </select>
             ) : (
               <input
                 type="text"
-                placeholder="OpenRouter Model ID"
+                placeholder="Model ID"
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full mt-2 p-2 rounded border border-gray-300 text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
-              />
-            )}
-
-            {activeProviderId === "openrouter" && (
-              <input
-                type="password"
-                placeholder="OpenRouter API Key"
-                value={openRouterKey}
-                onChange={(e) => setOpenRouterKey(e.target.value)}
-                className="w-full mt-2 p-2 rounded border border-gray-300 text-sm focus:ring-1 focus:ring-brilliant-rose outline-none"
+                className="w-full mt-2 p-2 border-2 border-graphite bg-white text-sm outline-none"
               />
             )}
           </ControlCard>
 
-          <ControlCard
-            title="Obsidian Context"
-            description="Map your genealogy vault"
-          >
+          <ControlCard title="Coding Mode" description="Inject Codebase">
+            <button
+              onClick={handleScanCodebase}
+              className={`w-full p-3 font-black border-4 border-graphite transition-all shadow-[4px_4px_0px_0px_rgba(232,185,35,1)] hover:shadow-none active:translate-x-1 active:translate-y-1 ${isCodingMode ? "bg-brilliant-rose text-white" : "bg-white"}`}
+            >
+              {isCodingMode ? "READY TO CODE" : "SCAN PROJECT"}
+            </button>
+          </ControlCard>
+
+          <ControlCard title="Obsidian" description="Vault Mapping">
             <button
               onClick={handlePickVault}
-              className="w-full text-left p-2 rounded border border-gray-300 bg-white text-[10px] truncate mb-2 hover:bg-gray-50 transition-colors"
+              className="w-full text-left p-2 border-2 border-graphite bg-white text-[10px] truncate mb-2"
             >
               {vaultPath || "Select Vault Folder..."}
             </button>
             <button
               onClick={handleInjectContext}
-              className="w-full bg-graphite text-white text-xs py-2 rounded font-bold hover:bg-black transition-colors"
+              className="w-full bg-graphite text-white text-xs py-2 border-2 border-graphite font-bold hover:bg-black transition-colors"
             >
               READ RECENT NOTES
             </button>
@@ -1027,7 +1151,7 @@ const App = () => {
                 onChange={(e) => setIsGenealogyMode(e.target.checked)}
                 className="w-4 h-4 accent-brilliant-rose"
               />
-              <span className="text-sm font-medium group-hover:text-brilliant-rose transition-colors">
+              <span className="text-sm font-bold group-hover:text-brilliant-rose transition-colors">
                 Genealogy Expert
               </span>
             </label>
@@ -1035,16 +1159,22 @@ const App = () => {
         </div>
       </aside>
 
-      {/* Main Chat Area */}
-      <main className="flex-grow flex flex-col relative">
+      {/* DRAG HANDLE: The "Zipper" */}
+      <div
+        onMouseDown={() => (isResizing.current = true)}
+        className="w-2 cursor-col-resize hover:bg-saffron active:bg-brilliant-rose transition-colors z-50"
+      />
+
+      {/* MAIN CHAT AREA */}
+      <main className="flex-grow flex flex-col relative bg-white">
         <div
           ref={scrollRef}
           className="flex-grow overflow-y-auto px-12 py-8 space-y-2"
         >
           {thread.messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
-              <ChatDivider label="New Session" />
-              <p className="text-sm italic">Ready for input.</p>
+              <ChatDivider label="Standby for Command" />
+              <p className="text-sm italic">Engine Active. Ready for input.</p>
             </div>
           )}
 
@@ -1057,15 +1187,15 @@ const App = () => {
 
           {isProcessing && (
             <div className="flex justify-start">
-              <div className="bg-bright-snow px-4 py-2 rounded-lg text-xs animate-pulse border border-gray-200">
-                Lyra is thinking...
+              <div className="text-brilliant-rose font-black italic text-xs animate-pulse">
+                LYRA IS COMPUTING...
               </div>
             </div>
           )}
         </div>
 
-        {/* Input Dock */}
-        <div className="p-8 border-t border-gray-100 bg-white/80 backdrop-blur-md">
+        {/* INPUT DOCK: THE BOLD HARDWARE BOX */}
+        <div className="p-8 bg-white border-t-4 border-graphite">
           <div className="max-w-4xl mx-auto flex items-end space-x-4">
             <div className="flex-grow relative">
               <textarea
@@ -1074,13 +1204,13 @@ const App = () => {
                 onKeyDown={(e) =>
                   e.key === "Enter" && !e.shiftKey && handleSend()
                 }
-                placeholder="Ask Project Lyra..."
-                className="w-full p-4 pr-12 rounded-2xl border-2 border-graphite shadow-[4px_4px_0px_0px_rgba(51,51,51,1)] focus:outline-none focus:ring-2 focus:ring-brilliant-rose resize-none h-24 transition-all"
+                placeholder="ENTER COMMAND..."
+                className="w-full p-4 pr-12 rounded-none border-4 border-graphite shadow-[6px_6px_0px_0px_rgba(232,185,35,1)] focus:outline-none focus:shadow-[4px_4px_0px_0px_rgba(255,58,174,1)] transition-all resize-none h-24 font-bold"
               />
               <button
                 onClick={handleSend}
                 disabled={isProcessing}
-                className="absolute right-4 bottom-4 p-2 bg-brilliant-rose text-white rounded-xl hover:scale-110 active:scale-95 transition-transform disabled:bg-gray-300"
+                className="absolute right-4 bottom-4 p-2 bg-brilliant-rose text-white border-2 border-graphite hover:scale-110 active:scale-95 transition-all disabled:bg-gray-300"
               >
                 <svg
                   className="w-5 h-5"
@@ -1100,8 +1230,7 @@ const App = () => {
 
             <button
               onClick={handleExport}
-              title="Save to Vault"
-              className="p-4 rounded-2xl border-2 border-saffron text-saffron hover:bg-saffron hover:text-white transition-all font-bold text-xs whitespace-nowrap"
+              className="p-4 bg-white border-4 border-saffron text-graphite font-black text-xs shadow-[4px_4px_0px_0px_rgba(51,51,51,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all whitespace-nowrap"
             >
               SAVE TO VAULT
             </button>
@@ -1113,36 +1242,6 @@ const App = () => {
 };
 
 export default App;
-</file>
-
-<file path=".gitignore">
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-
-.env
 </file>
 
 <file path="SPEC.md">
