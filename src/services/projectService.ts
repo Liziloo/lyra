@@ -2,7 +2,7 @@ import { readDir } from "@tauri-apps/plugin-fs";
 
 export const projectService = {
   async scanProject(path: string, depth = 0): Promise<string> {
-    if (depth > 2) return ""; // Limit depth for prototype performance
+    if (depth > 2) return "";
     try {
       const entries = await readDir(path);
       let structure = "";
