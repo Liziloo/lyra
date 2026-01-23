@@ -15,6 +15,7 @@ interface Provider{
 interface Thread {
   id: string;
   messages: Message[];
+  summary?: string;
   createdAt: Date;
   updatedAt: Date;
 }

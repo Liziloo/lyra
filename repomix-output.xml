@@ -52,6 +52,7 @@ src/
       MessageBubble.tsx
     sidebar/
       ControlCard.tsx
+      Sidebar.tsx
     ui/
       StatusBadge.tsx
   hooks/
@@ -108,39 +109,6 @@ vite.config.ts
 <files>
 This section contains the contents of the repository's files.
 
-<file path="src/services/projectService.ts">
-import { readDir } from "@tauri-apps/plugin-fs";
-
-export const projectService = {
-  async scanProject(path: string, depth = 0): Promise<string> {
-    if (depth > 2) return "";
-    try {
-      const entries = await readDir(path);
-      let structure = "";
-      for (const entry of entries) {
-        if (
-          entry.name.startsWith(".") ||
-          entry.name === "node_modules" ||
-          entry.name === "target"
-        )
-          continue;
-        const indent = "  ".repeat(depth);
-        structure += `${indent}${entry.isDirectory ? "📁" : "📄"} ${entry.name}\n`;
-        if (entry.isDirectory) {
-          structure += await this.scanProject(
-            `${path}/${entry.name}`,
-            depth + 1,
-          );
-        }
-      }
-      return structure;
-    } catch (e) {
-      return "[Error scanning directory]";
-    }
-  },
-};
-</file>
-
 <file path="public/tauri.svg">
 <svg width="206" height="231" viewBox="0 0 206 231" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M143.143 84C143.143 96.1503 133.293 106 121.143 106C108.992 106 99.1426 96.1503 99.1426 84C99.1426 71.8497 108.992 62 121.143 62C133.293 62 143.143 71.8497 143.143 84Z" fill="#FFC131"/>
@@ -176,75 +144,133 @@ export const ChatDivider: React.FC<{ label?: string }> = ({ label }) => {
 };
 </file>
 
-<file path="src/components/chat/MessageBubble.tsx">
+<file path="src/components/sidebar/Sidebar.tsx">
 import React from "react";
-import { Message } from "../../types/index";
+import { StatusBadge } from "../ui/StatusBadge";
+import { ControlCard } from "./ControlCard";
+import { obsidianService } from "../../services/obsidianService";
 
-export const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
-  const isUser = message.role === "user";
-
-  return (
-    <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[80%] px-10 py-6 rounded-[2.5rem] leading-relaxed text-sm font-bold shadow-sm transition-all ${
-          isUser
-            ? "bg-graphite text-white border-2 border-saffron rounded-tr-none shadow-md"
-            : "bg-white text-graphite border-4 border-brilliant-rose rounded-tl-none shadow-[0_10px_30px_-15px_rgba(255,58,174,0.4)]"
-        }`}
-      >
-        {/* Added a Pink Label for the AI for bold branding without background fatigue */}
-        {!isUser && (
-          <div className="text-[10px] mb-1 font-black uppercase tracking-[0.3em] text-brilliant-rose">
-            Lyra Intelligence
-          </div>
-        )}
-
-        <div className="whitespace-pre-wrap">{message.text}</div>
-
-        <div
-          className={`text-[9px] mt-3 font-black uppercase tracking-[0.2em] opacity-40 ${
-            isUser ? "text-saffron" : "text-brilliant-rose"
-          }`}
-        >
-          {new Date(message.timestamp).toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </div>
-      </div>
-    </div>
-  );
-};
-</file>
-
-<file path="src/components/sidebar/ControlCard.tsx">
-import React from "react";
-
-interface ControlCardProps {
-  title: string;
-  description?: string;
-  children: React.ReactNode;
+interface SidebarProps {
+  width: number;
+  isOllamaOnline: boolean;
+  activeProviderId: string;
+  setActiveProviderId: (id: "ollama" | "openrouter") => void;
+  selectedModel: string;
+  setSelectedModel: (m: string) => void;
+  availableModels: string[];
+  isCodingMode: boolean;
+  handleScanCodebase: () => void;
+  vaultPath: string;
+  setVaultPath: (p: string) => void;
+  setContextSnap: (s: string) => void;
+  isGenealogyMode: boolean;
+  setIsGenealogyMode: (b: boolean) => void;
 }
 
-export const ControlCard: React.FC<ControlCardProps> = ({
-  title,
-  description,
-  children,
-}) => {
+export const Sidebar: React.FC<SidebarProps> = (props) => {
   return (
-    <div className="bg-white/5 border border-saffron/20 rounded-[2.5rem] p-6 shadow-xl transition-all duration-300 group hover:border-brilliant-rose">
-      <div className="mb-4">
-        <h3 className="text-xs font-black text-saffron uppercase tracking-[0.25em] group-hover:text-brilliant-rose transition-colors">
-          {title}
-        </h3>
-        {description && (
-          <p className="text-[10px] text-bright-snow/40 mt-1 italic font-light">
-            {description}
-          </p>
-        )}
+    <aside
+      style={{ width: props.width }}
+      className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 sm:p-8 bg-white z-20 shadow-xl overflow-y-auto custom-scrollbar"
+    >
+      <div className="mb-10">
+        <h1 className="text-4xl sm:text-5xl font-black italic tracking-tighter text-graphite">
+          LYRA{" "}
+          <span className="text-brilliant-rose text-xl not-italic">V0.1</span>
+        </h1>
+        <div className="h-1.5 w-16 bg-brilliant-rose mt-2 rounded-full"></div>
       </div>
-      <div className="control-content">{children}</div>
-    </div>
+
+      <div className="mb-10">
+        <StatusBadge isOnline={props.isOllamaOnline} label="Workstation" />
+      </div>
+
+      <div className="space-y-6">
+        <ControlCard title="Intelligence" description="Hardware Mapping">
+          <select
+            value={props.activeProviderId}
+            onChange={(e) => props.setActiveProviderId(e.target.value as any)}
+            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
+          >
+            <option value="ollama">OLLAMA</option>
+            <option value="openrouter">OPENROUTER</option>
+          </select>
+
+          {props.activeProviderId === "ollama" ? (
+            <select
+              value={props.selectedModel}
+              onChange={(e) => props.setSelectedModel(e.target.value)}
+              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
+              disabled={!props.isOllamaOnline}
+            >
+              {props.availableModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={props.selectedModel}
+              onChange={(e) => props.setSelectedModel(e.target.value)}
+              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow text-xs outline-none font-bold"
+              placeholder="Model ID"
+            />
+          )}
+        </ControlCard>
+
+        <ControlCard title="Coding Mode" description="Recursive Scan">
+          <button
+            onClick={props.handleScanCodebase}
+            className={`w-full py-4 rounded-[2rem] border-2 font-black transition-all text-xs tracking-widest ${
+              props.isCodingMode
+                ? "bg-brilliant-rose border-graphite text-white shadow-md"
+                : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
+            }`}
+          >
+            {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
+          </button>
+        </ControlCard>
+
+        <ControlCard title="Vault" description="Obsidian knowledge">
+          <button
+            onClick={() =>
+              obsidianService
+                .pickVaultFolder()
+                .then((p) => p && props.setVaultPath(p))
+            }
+            className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[9px] truncate mb-2 italic"
+          >
+            {props.vaultPath || "MAP VAULT PATH..."}
+          </button>
+          <button
+            onClick={async () =>
+              props.setContextSnap(
+                await obsidianService.getRecentNotesContext(props.vaultPath),
+              )
+            }
+            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest"
+          >
+            SNAP CONTEXT
+          </button>
+        </ControlCard>
+
+        <div className="p-6 rounded-[2.5rem] bg-white border-4 border-brilliant-rose text-brilliant-rose shadow-lg mt-4">
+          <label className="flex items-center space-x-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={props.isGenealogyMode}
+              onChange={(e) => props.setIsGenealogyMode(e.target.checked)}
+              className="w-6 h-6 accent-brilliant-rose"
+            />
+            <span className="text-xs font-black uppercase tracking-tighter">
+              Genealogy Expert
+            </span>
+          </label>
+        </div>
+      </div>
+    </aside>
   );
 };
 </file>
@@ -279,37 +305,6 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
     </div>
   );
 };
-</file>
-
-<file path="src/styles/App.css">
-@import "tailwindcss";
-
-@theme {
-  --color-bright-snow: #f8f9faff;
-  --color-graphite: #333333ff;
-  --color-brilliant-rose: #ff3aaeff;
-  --color-saffron: #e8b923ff;
-}
-
-@layer base {
-  body {
-    /* Clean, professional workspace background */
-    @apply bg-bright-snow text-graphite font-sans;
-  }
-}
-
-/* Custom Scrollbar - Pink Silk */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 5px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  @apply bg-brilliant-rose rounded-full;
-}
-
-/* Structural shadow for a "plush" feel */
-.boutique-shadow {
-  box-shadow: 0 10px 40px -10px rgba(51, 51, 51, 0.1);
-}
 </file>
 
 <file path="src/vite-env.d.ts">
@@ -397,6 +392,42 @@ fn main() {
   },
   "include": ["vite.config.ts"]
 }
+</file>
+
+<file path="src/components/sidebar/ControlCard.tsx">
+import React from "react";
+
+interface ControlCardProps {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+  active?: boolean;
+}
+
+export const ControlCard: React.FC<ControlCardProps> = ({
+  title,
+  description,
+  children,
+  active,
+}) => {
+  return (
+    <div
+      className={`bg-white border-2 rounded-2xl p-4 transition-all duration-300 ${active ? "border-brilliant-rose shadow-md" : "border-saffron/20 shadow-sm"}`}
+    >
+      <div className="mb-3">
+        <h3
+          className={`text-[10px] font-black uppercase tracking-[0.2em] ${active ? "text-brilliant-rose" : "text-graphite"}`}
+        >
+          {title}
+        </h3>
+        {description && (
+          <p className="text-[9px] opacity-40 italic mt-0.5">{description}</p>
+        )}
+      </div>
+      <div className="flex flex-col gap-2">{children}</div>
+    </div>
+  );
+};
 </file>
 
 <file path="src/hooks/useHardwareCheck.ts">
@@ -499,6 +530,39 @@ export const obsidianService = {
 };
 </file>
 
+<file path="src/services/projectService.ts">
+import { readDir } from "@tauri-apps/plugin-fs";
+
+export const projectService = {
+  async scanProject(path: string, depth = 0): Promise<string> {
+    if (depth > 2) return "";
+    try {
+      const entries = await readDir(path);
+      let structure = "";
+      for (const entry of entries) {
+        if (
+          entry.name.startsWith(".") ||
+          entry.name === "node_modules" ||
+          entry.name === "target"
+        )
+          continue;
+        const indent = "  ".repeat(depth);
+        structure += `${indent}${entry.isDirectory ? "📁" : "📄"} ${entry.name}\n`;
+        if (entry.isDirectory) {
+          structure += await this.scanProject(
+            `${path}/${entry.name}`,
+            depth + 1,
+          );
+        }
+      }
+      return structure;
+    } catch (e) {
+      return "[Error scanning directory]";
+    }
+  },
+};
+</file>
+
 <file path="src/types/index.ts">
 interface Message {
   id: string;
@@ -583,6 +647,42 @@ export default defineConfig(async () => ({
     },
   },
 }));
+</file>
+
+<file path="src/components/chat/MessageBubble.tsx">
+import React from "react";
+import { Message } from "../../types/index";
+
+export const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
+  const isUser = message.role === "user";
+
+  return (
+    <div className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[85%] sm:max-w-[80%] px-8 sm:px-10 py-5 sm:py-6 rounded-[2.5rem] leading-relaxed text-sm font-bold shadow-sm transition-all ${
+          isUser
+            ? "bg-graphite text-white border-2 border-saffron rounded-tr-none shadow-md"
+            : "bg-white text-graphite border-4 border-brilliant-rose rounded-tl-none shadow-[0_10px_40px_-15px_rgba(255,58,174,0.3)]"
+        }`}
+      >
+        {!isUser && (
+          <div className="text-[10px] mb-1 font-black uppercase tracking-[0.3em] text-brilliant-rose">
+            Lyra Intelligence
+          </div>
+        )}
+        <div className="whitespace-pre-wrap">{message.text}</div>
+        <div
+          className={`text-[9px] mt-3 font-black uppercase tracking-[0.2em] opacity-40 ${isUser ? "text-saffron" : "text-brilliant-rose"}`}
+        >
+          {new Date(message.timestamp).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
 </file>
 
 <file path="src/services/llmService.ts">
@@ -680,6 +780,34 @@ export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
     return [];
   }
 };
+</file>
+
+<file path="src/styles/App.css">
+@import "tailwindcss";
+
+@theme {
+  --color-bright-snow: #f8f9faff;
+  --color-graphite: #333333ff;
+  --color-brilliant-rose: #ff3aaeff;
+  --color-saffron: #e8b923ff;
+}
+
+@layer base {
+  body {
+    @apply bg-bright-snow text-graphite font-sans antialiased overflow-hidden;
+  }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-brilliant-rose/40 rounded-full;
+}
+
+.boutique-shadow {
+  box-shadow: 0 10px 30px -10px rgba(51, 51, 51, 0.1);
+}
 </file>
 
 <file path="src/main.tsx">
@@ -880,361 +1008,6 @@ dist-ssr
 .env
 </file>
 
-<file path="src/App.tsx">
-import { useState, useEffect, useRef } from "react";
-import { v4 as uuidv4 } from "uuid";
-
-// Types
-import { Message, Provider, Thread } from "./types";
-
-// Services & Hooks
-import { getOllamaModels, sendMessage } from "./services/llmService";
-import { obsidianService } from "./services/obsidianService";
-import { projectService } from "./services/projectService";
-import { useHardwareCheck } from "./hooks/useHardwareCheck";
-
-// Components
-import { StatusBadge } from "./components/ui/StatusBadge";
-import { MessageBubble } from "./components/chat/MessageBubble";
-import { ChatDivider } from "./components/chat/ChatDivider";
-import { ControlCard } from "./components/sidebar/ControlCard";
-
-const App = () => {
-  // --- 1. Sizing & Layout (Prevent Sidebar Squish) ---
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const isResizing = useRef(false);
-
-  // --- 2. State (Strictly Environment Variables) ---
-  const ollamaBaseUrl =
-    import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
-  const [vaultPath, setVaultPath] = useState<string>(
-    import.meta.env.VITE_OBSIDIAN_PATH || "",
-  );
-  const [openRouterKey] = useState<string>(
-    import.meta.env.VITE_OPENROUTER_KEY || "",
-  );
-
-  const [contextSnap, setContextSnap] = useState<string>("");
-  const [isGenealogyMode, setIsGenealogyMode] = useState(false);
-  const [isCodingMode, setIsCodingMode] = useState(false);
-
-  const [activeProviderId, setActiveProviderId] = useState<
-    "ollama" | "openrouter"
-  >("ollama");
-  const [selectedModel, setSelectedModel] = useState("llama3.2");
-  const [inputText, setInputText] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-
-  // Current Chat Thread
-  const [thread, setThread] = useState<Thread>({
-    id: uuidv4(),
-    messages: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const { isOllamaOnline } = useHardwareCheck();
-
-  // --- 3. Sidebar Resize Handlers ---
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing.current) return;
-      setSidebarWidth(Math.max(260, Math.min(600, e.clientX)));
-    };
-    const handleMouseUp = () => {
-      isResizing.current = false;
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
-
-  // --- 4. Logic Handlers ---
-  useEffect(() => {
-    const refreshModels = async () => {
-      if (isOllamaOnline && activeProviderId === "ollama") {
-        const models = await getOllamaModels(ollamaBaseUrl);
-        setAvailableModels(models);
-        if (models.length > 0 && !models.includes(selectedModel)) {
-          setSelectedModel(models[0]);
-        }
-      }
-    };
-    refreshModels();
-  }, [isOllamaOnline, activeProviderId, ollamaBaseUrl]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [thread.messages]);
-
-  const handleScanCodebase = async () => {
-    const path = await obsidianService.pickVaultFolder();
-    if (path) {
-      const map = await projectService.scanProject(path);
-      setContextSnap(`[CODEBASE SCAN: ${path}]\n${map}`);
-      setIsCodingMode(true);
-      alert("Hardware context updated with project structure.");
-    }
-  };
-
-  const handleSend = async () => {
-    if (!inputText.trim() || isProcessing) return;
-
-    const userMsg: Message = {
-      id: uuidv4(),
-      role: "user",
-      text: inputText,
-      timestamp: new Date(),
-    };
-
-    const newMessages = [...thread.messages, userMsg];
-    setThread({ ...thread, messages: newMessages });
-    setInputText("");
-    setIsProcessing(true);
-
-    try {
-      const provider: Provider = {
-        id: activeProviderId,
-        name: activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
-        url:
-          activeProviderId === "ollama"
-            ? `${ollamaBaseUrl}/api/chat`
-            : "https://openrouter.ai/api/v1/chat/completions",
-        apiKey: activeProviderId === "openrouter" ? openRouterKey : "",
-      };
-
-      const aiResponseText = await sendMessage(newMessages, {
-        provider,
-        model: selectedModel,
-        isGenealogyExpert: isGenealogyMode,
-        contextNotes: contextSnap,
-      });
-
-      const aiMsg: Message = {
-        id: uuidv4(),
-        role: "assistant",
-        text: aiResponseText,
-        timestamp: new Date(),
-      };
-      setThread((prev) => ({
-        ...prev,
-        messages: [...prev.messages, aiMsg],
-        updatedAt: new Date(),
-      }));
-      setContextSnap("");
-      setIsCodingMode(false);
-    } catch (err: any) {
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  return (
-    <div className="flex h-screen w-full bg-bright-snow text-graphite overflow-hidden font-sans">
-      {/* SIDEBAR: Structural, tailored white/black/gold. Rigid sizing. */}
-      <aside
-        style={{ width: sidebarWidth }}
-        className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-8 bg-white z-20 shadow-xl"
-      >
-        <div className="mb-10">
-          <h1 className="text-5xl font-black italic tracking-tighter text-graphite">
-            LYRA{" "}
-            <span className="text-brilliant-rose text-xl not-italic tracking-normal">
-              V0.1
-            </span>
-          </h1>
-          <div className="h-1.5 w-16 bg-brilliant-rose mt-2 rounded-full"></div>
-        </div>
-
-        <div className="mb-10">
-          <StatusBadge isOnline={isOllamaOnline} label="Workstation Core" />
-        </div>
-
-        <div className="flex-grow space-y-6 overflow-y-auto pr-2 custom-scrollbar">
-          <ControlCard title="Intelligence" description="Hardware Route">
-            <select
-              value={activeProviderId}
-              onChange={(e) => setActiveProviderId(e.target.value as any)}
-              className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
-            >
-              <option value="ollama">OLLAMA</option>
-              <option value="openrouter">OPENROUTER</option>
-            </select>
-
-            {activeProviderId === "ollama" ? (
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
-                disabled={!isOllamaOnline}
-              >
-                {availableModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type="text"
-                placeholder="Model ID"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow text-xs outline-none font-bold"
-              />
-            )}
-          </ControlCard>
-
-          <ControlCard title="Coding Mode" description="Access Codebase">
-            <button
-              onClick={handleScanCodebase}
-              className={`w-full py-4 rounded-[2rem] border-4 font-black transition-all text-xs tracking-widest ${
-                isCodingMode
-                  ? "bg-white border-brilliant-rose text-brilliant-rose shadow-[0_0_15px_rgba(255,58,174,0.3)]"
-                  : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
-              }`}
-            >
-              {isCodingMode ? "● PROJECT ATTACHED" : "SCAN PROJECT"}
-            </button>
-          </ControlCard>
-
-          <ControlCard title="Knowledge" description="Vault Mapping">
-            <button
-              onClick={() =>
-                obsidianService
-                  .pickVaultFolder()
-                  .then((p) => p && setVaultPath(p))
-              }
-              className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[10px] truncate mb-2 italic"
-            >
-              {vaultPath || "MAP VAULT PATH..."}
-            </button>
-            <button
-              onClick={async () => {
-                const notes =
-                  await obsidianService.getRecentNotesContext(vaultPath);
-                setContextSnap(notes);
-                alert("Context Snapped!");
-              }}
-              className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest"
-            >
-              SNAP CONTEXT
-            </button>
-          </ControlCard>
-
-          <div className="p-6 rounded-[2.5rem] bg-white border-4 border-brilliant-rose text-brilliant-rose shadow-lg mt-4 transition-all">
-            <label className="flex items-center space-x-4 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={isGenealogyMode}
-                onChange={(e) => setIsGenealogyMode(e.target.checked)}
-                className="w-6 h-6 accent-brilliant-rose"
-              />
-              <span className="text-xs font-black uppercase tracking-widest group-hover:text-graphite transition-colors">
-                Genealogy Expert
-              </span>
-            </label>
-          </div>
-        </div>
-      </aside>
-
-      {/* DRAG HANDLE: The Gold "Jewelry" Zipper */}
-      <div
-        onMouseDown={() => (isResizing.current = true)}
-        className="w-1.5 cursor-col-resize bg-saffron hover:bg-brilliant-rose transition-all z-50"
-      />
-
-      {/* MAIN CHAT AREA: Bright Snow professional background */}
-      <main className="flex-grow flex flex-col relative bg-bright-snow">
-        <div
-          ref={scrollRef}
-          className="flex-grow overflow-y-auto px-16 py-12 space-y-10 custom-scrollbar"
-        >
-          {thread.messages.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center opacity-30">
-              <h2 className="text-5xl font-thin tracking-[0.5em] text-graphite uppercase mb-4 italic">
-                Lyra
-              </h2>
-              <div className="w-24 h-1 bg-saffron rounded-full"></div>
-            </div>
-          )}
-
-          {thread.messages.map((m, idx) => (
-            <div key={m.id}>
-              {idx > 0 && idx % 4 === 0 && (
-                <ChatDivider label="Logic Continuity" />
-              )}
-              <MessageBubble message={m} />
-            </div>
-          ))}
-
-          {isProcessing && (
-            <div className="flex justify-start ml-10">
-              <div className="text-brilliant-rose font-black italic text-xs animate-pulse tracking-[0.2em]">
-                CONSULTING INTELLIGENCE...
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* INPUT DOCK: Tailored graphite and snow. Bold but professional. */}
-        <div className="p-10 bg-white border-t-2 border-saffron/10">
-          <div className="max-w-5xl mx-auto flex items-end space-x-6">
-            <div className="flex-grow relative group">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) =>
-                  e.key === "Enter" && !e.shiftKey && handleSend()
-                }
-                placeholder="Command Lyra..."
-                className="w-full p-8 pr-20 bg-bright-snow border-2 border-graphite rounded-[3rem] text-lg text-graphite outline-none focus:border-brilliant-rose focus:ring-4 focus:ring-brilliant-rose/5 transition-all resize-none h-32 font-bold placeholder:italic placeholder:font-light"
-              />
-              <button
-                onClick={handleSend}
-                disabled={isProcessing}
-                className="absolute right-6 bottom-6 bg-brilliant-rose text-white w-14 h-14 rounded-full flex items-center justify-center shadow-lg hover:scale-110 active:scale-95 transition-all border-4 border-white"
-              >
-                <svg
-                  className="w-7 h-7"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="4"
-                    d="M5 10l7-7m0 0l7 7m-7-7v18"
-                  />
-                </svg>
-              </button>
-            </div>
-
-            <button
-              onClick={() => obsidianService.saveChatToVault(vaultPath, thread)}
-              className="p-6 bg-white border-4 border-saffron text-graphite font-black text-xs rounded-[2rem] shadow-xl hover:bg-saffron hover:text-white transition-all whitespace-nowrap uppercase tracking-widest"
-            >
-              SAVE TO VAULT
-            </button>
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-};
-
-export default App;
-</file>
-
 <file path="SPEC.md">
 # Prototype Spec: Project Lyra (v0.1 - The Core)
 
@@ -1330,6 +1103,261 @@ export default App;
     "vite": "^7.3.1"
   }
 }
+</file>
+
+<file path="src/App.tsx">
+import { useState, useEffect, useRef } from "react";
+import { v4 as uuidv4 } from "uuid";
+
+// Types
+import { Message, Provider, Thread } from "./types";
+
+// Services & Hooks
+import { getOllamaModels, sendMessage } from "./services/llmService";
+import { obsidianService } from "./services/obsidianService";
+import { projectService } from "./services/projectService";
+import { useHardwareCheck } from "./hooks/useHardwareCheck";
+
+// Components
+import { Sidebar } from "./components/sidebar/Sidebar";
+import { MessageBubble } from "./components/chat/MessageBubble";
+import { ChatDivider } from "./components/chat/ChatDivider";
+
+const App = () => {
+  // --- 1. Layout & State ---
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+  const isResizing = useRef(false);
+
+  const ollamaBaseUrl =
+    import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
+  const [vaultPath, setVaultPath] = useState<string>(
+    import.meta.env.VITE_OBSIDIAN_PATH || "",
+  );
+  const [openRouterKey] = useState<string>(
+    import.meta.env.VITE_OPENROUTER_KEY || "",
+  );
+
+  const [contextSnap, setContextSnap] = useState<string>("");
+  const [isGenealogyMode, setIsGenealogyMode] = useState(false);
+  const [isCodingMode, setIsCodingMode] = useState(false);
+
+  const [activeProviderId, setActiveProviderId] = useState<
+    "ollama" | "openrouter"
+  >("ollama");
+  const [selectedModel, setSelectedModel] = useState("llama3.2");
+  const [inputText, setInputText] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+
+  const [thread, setThread] = useState<Thread>({
+    id: uuidv4(),
+    messages: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { isOllamaOnline } = useHardwareCheck();
+
+  // --- 2. Handlers & Effects ---
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      setSidebarWidth(Math.max(260, Math.min(600, e.clientX)));
+    };
+    const handleMouseUp = () => {
+      isResizing.current = false;
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshModels = async () => {
+      if (isOllamaOnline && activeProviderId === "ollama") {
+        const models = await getOllamaModels(ollamaBaseUrl);
+        setAvailableModels(models);
+        if (models.length > 0 && !models.includes(selectedModel)) {
+          setSelectedModel(models[0]);
+        }
+      }
+    };
+    refreshModels();
+  }, [isOllamaOnline, activeProviderId, ollamaBaseUrl]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [thread.messages, isProcessing]);
+
+  const handleScanCodebase = async () => {
+    const path = await obsidianService.pickVaultFolder();
+    if (path) {
+      const map = await projectService.scanProject(path);
+      setContextSnap(`[CODEBASE SCAN: ${path}]\n${map}`);
+      setIsCodingMode(true);
+      alert("Hardware context updated with project structure.");
+    }
+  };
+
+  const handleSend = async () => {
+    if (!inputText.trim() || isProcessing) return;
+    const userMsg: Message = {
+      id: uuidv4(),
+      role: "user",
+      text: inputText,
+      timestamp: new Date(),
+    };
+    const newMessages = [...thread.messages, userMsg];
+    setThread({ ...thread, messages: newMessages });
+    setInputText("");
+    setIsProcessing(true);
+
+    try {
+      const provider: Provider = {
+        id: activeProviderId,
+        name: activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
+        url:
+          activeProviderId === "ollama"
+            ? `${ollamaBaseUrl}/api/chat`
+            : "https://openrouter.ai/api/v1/chat/completions",
+        apiKey: activeProviderId === "openrouter" ? openRouterKey : "",
+      };
+
+      const aiResponseText = await sendMessage(newMessages, {
+        provider,
+        model: selectedModel,
+        isGenealogyExpert: isGenealogyMode,
+        contextNotes: contextSnap,
+      });
+
+      setThread((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          {
+            id: uuidv4(),
+            role: "assistant",
+            text: aiResponseText,
+            timestamp: new Date(),
+          },
+        ],
+        updatedAt: new Date(),
+      }));
+      setContextSnap("");
+      setIsCodingMode(false);
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="flex h-screen w-full bg-bright-snow text-graphite overflow-hidden font-sans">
+      <Sidebar
+        width={sidebarWidth}
+        isOllamaOnline={isOllamaOnline}
+        activeProviderId={activeProviderId}
+        setActiveProviderId={setActiveProviderId}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        availableModels={availableModels}
+        isCodingMode={isCodingMode}
+        handleScanCodebase={handleScanCodebase}
+        vaultPath={vaultPath}
+        setVaultPath={setVaultPath}
+        setContextSnap={setContextSnap}
+        isGenealogyMode={isGenealogyMode}
+        setIsGenealogyMode={setIsGenealogyMode}
+      />
+
+      {/* DRAG HANDLE: The Gold Zipper */}
+      <div
+        onMouseDown={() => (isResizing.current = true)}
+        className="w-1.5 cursor-col-resize bg-saffron hover:bg-brilliant-rose transition-all z-50 shadow-xl"
+      />
+
+      <main className="flex-grow flex flex-col relative bg-bright-snow">
+        <div
+          ref={scrollRef}
+          className="flex-grow overflow-y-auto px-8 sm:px-16 py-12 space-y-10 custom-scrollbar"
+        >
+          {thread.messages.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center opacity-30">
+              <h2 className="text-5xl font-thin tracking-[0.5em] text-graphite uppercase mb-4 italic text-center">
+                Lyra
+              </h2>
+              <div className="w-24 h-1 bg-saffron rounded-full"></div>
+            </div>
+          )}
+          {thread.messages.map((m, idx) => (
+            <div key={m.id}>
+              {idx > 0 && idx % 4 === 0 && <ChatDivider label="Continuity" />}
+              <MessageBubble message={m} />
+            </div>
+          ))}
+          {isProcessing && (
+            <div className="flex justify-start ml-10">
+              <div className="text-brilliant-rose font-black italic text-xs animate-pulse tracking-widest uppercase">
+                Consulting Intelligence...
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* INPUT DOCK */}
+        <div className="p-6 sm:p-10 bg-white border-t-2 border-saffron/10">
+          <div className="max-w-5xl mx-auto flex items-end space-x-6">
+            <div className="flex-grow relative group">
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && !e.shiftKey && handleSend()
+                }
+                placeholder="Direct Lyra..."
+                className="w-full p-6 sm:p-8 pr-20 bg-bright-snow border-2 border-graphite rounded-[2.5rem] sm:rounded-[3rem] text-base sm:text-lg text-graphite outline-none focus:border-brilliant-rose focus:ring-4 focus:ring-brilliant-rose/5 transition-all resize-none h-28 sm:h-32 font-bold placeholder:italic"
+              />
+              <button
+                onClick={handleSend}
+                disabled={isProcessing}
+                className="absolute right-4 bottom-4 sm:right-6 sm:bottom-6 bg-brilliant-rose text-white w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border-4 border-white"
+              >
+                <svg
+                  className="w-6 h-6 sm:w-7 sm:h-7"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="4"
+                    d="M5 10l7-7m0 0l7 7m-7-7v18"
+                  />
+                </svg>
+              </button>
+            </div>
+            <button
+              onClick={() => obsidianService.saveChatToVault(vaultPath, thread)}
+              className="hidden sm:block p-6 bg-white border-4 border-saffron text-graphite font-black text-xs rounded-[2rem] shadow-xl hover:bg-saffron hover:text-white transition-all whitespace-nowrap uppercase tracking-widest"
+            >
+              SAVE TO VAULT
+            </button>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default App;
 </file>
 
 </files>
