@@ -44,10 +44,18 @@ export const threadService = {
           const content = await readTextFile(`${THREADS_DIR}/${entry.name}`, {
             baseDir: BaseDirectory.AppLocalData,
           });
-          const thread = JSON.parse(content);
-          // Convert string dates back to Date objects
-          thread.updatedAt = new Date(thread.updatedAt);
-          thread.createdAt = new Date(thread.createdAt);
+          const parsed = JSON.parse(content);
+
+          // Hydrate dates for the thread and every message
+          const thread: Thread = {
+            ...parsed,
+            createdAt: new Date(parsed.createdAt),
+            updatedAt: new Date(parsed.updatedAt),
+            messages: parsed.messages.map((m: any) => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })),
+          };
           threads.push(thread);
         }
       }

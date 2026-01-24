@@ -61,6 +61,7 @@ src/
     llmService.ts
     obsidianService.ts
     projectService.ts
+    threadService.ts
   styles/
     App.css
   types/
@@ -149,6 +150,7 @@ import React from "react";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ControlCard } from "./ControlCard";
 import { obsidianService } from "../../services/obsidianService";
+import { Thread } from "../../types";
 
 interface SidebarProps {
   width: number;
@@ -165,6 +167,11 @@ interface SidebarProps {
   setContextSnap: (s: string) => void;
   isGenealogyMode: boolean;
   setIsGenealogyMode: (b: boolean) => void;
+  threads: Thread[];
+  currentThreadId: string;
+  onSelectThread: (id: string) => void;
+  onNewChat: () => void;
+  onDeleteThread: (id: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = (props) => {
@@ -304,6 +311,77 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       </span>
     </div>
   );
+};
+</file>
+
+<file path="src/services/threadService.ts">
+import {
+  readDir,
+  readTextFile,
+  writeFile,
+  mkdir,
+  remove,
+  BaseDirectory,
+} from "@tauri-apps/plugin-fs";
+import { Thread } from "../types";
+
+const THREADS_DIR = "threads";
+
+export const threadService = {
+  async ensureDir() {
+    try {
+      await mkdir(THREADS_DIR, {
+        baseDir: BaseDirectory.AppLocalData,
+        recursive: true,
+      });
+    } catch (e) {
+      // Directory likely exists
+    }
+  },
+
+  async saveThread(thread: Thread): Promise<void> {
+    await this.ensureDir();
+    const fileName = `${THREADS_DIR}/${thread.id}.json`;
+    const content = JSON.stringify(thread, null, 2);
+    await writeFile(fileName, new TextEncoder().encode(content), {
+      baseDir: BaseDirectory.AppLocalData,
+    });
+  },
+
+  async getAllThreads(): Promise<Thread[]> {
+    await this.ensureDir();
+    try {
+      const entries = await readDir(THREADS_DIR, {
+        baseDir: BaseDirectory.AppLocalData,
+      });
+      const threads: Thread[] = [];
+
+      for (const entry of entries) {
+        if (entry.name.endsWith(".json")) {
+          const content = await readTextFile(`${THREADS_DIR}/${entry.name}`, {
+            baseDir: BaseDirectory.AppLocalData,
+          });
+          const thread = JSON.parse(content);
+          // Convert string dates back to Date objects
+          thread.updatedAt = new Date(thread.updatedAt);
+          thread.createdAt = new Date(thread.createdAt);
+          threads.push(thread);
+        }
+      }
+      return threads.sort(
+        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+      );
+    } catch (e) {
+      console.error("Failed to load threads", e);
+      return [];
+    }
+  },
+
+  async deleteThread(id: string): Promise<void> {
+    await remove(`${THREADS_DIR}/${id}.json`, {
+      baseDir: BaseDirectory.AppLocalData,
+    });
+  },
 };
 </file>
 
@@ -563,31 +641,6 @@ export const projectService = {
 };
 </file>
 
-<file path="src/types/index.ts">
-interface Message {
-  id: string;
-  text: string;
-  role: string;
-  timestamp: Date;
-}
-
-interface Provider{
-    id: string;
-    name: string;
-    url: string;
-    apiKey: string
-}
-
-interface Thread {
-  id: string;
-  messages: Message[];
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type { Message, Provider, Thread };
-</file>
-
 <file path="src-tauri/capabilities/default.json">
 {
   "$schema": "../gen/schemas/desktop-schema.json",
@@ -808,6 +861,32 @@ export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
 .boutique-shadow {
   box-shadow: 0 10px 30px -10px rgba(51, 51, 51, 0.1);
 }
+</file>
+
+<file path="src/types/index.ts">
+interface Message {
+  id: string;
+  text: string;
+  role: string;
+  timestamp: Date;
+}
+
+interface Provider{
+    id: string;
+    name: string;
+    url: string;
+    apiKey: string
+}
+
+interface Thread {
+  id: string;
+  messages: Message[];
+  summary?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export type { Message, Provider, Thread };
 </file>
 
 <file path="src/main.tsx">

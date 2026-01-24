@@ -2,6 +2,7 @@ import React from "react";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ControlCard } from "./ControlCard";
 import { obsidianService } from "../../services/obsidianService";
+import { Thread } from "../../types";
 
 interface SidebarProps {
   width: number;
@@ -18,6 +19,11 @@ interface SidebarProps {
   setContextSnap: (s: string) => void;
   isGenealogyMode: boolean;
   setIsGenealogyMode: (b: boolean) => void;
+  threads: Thread[];
+  currentThreadId: string;
+  onSelectThread: (id: string) => void;
+  onNewChat: () => void;
+  onDeleteThread: (id: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = (props) => {
@@ -108,20 +114,6 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             SNAP CONTEXT
           </button>
         </ControlCard>
-
-        <div className="p-6 rounded-[2.5rem] bg-white border-4 border-brilliant-rose text-brilliant-rose shadow-lg mt-4">
-          <label className="flex items-center space-x-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={props.isGenealogyMode}
-              onChange={(e) => props.setIsGenealogyMode(e.target.checked)}
-              className="w-6 h-6 accent-brilliant-rose"
-            />
-            <span className="text-xs font-black uppercase tracking-tighter">
-              Genealogy Expert
-            </span>
-          </label>
-        </div>
       </div>
     </aside>
   );
