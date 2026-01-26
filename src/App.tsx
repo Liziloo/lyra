@@ -17,9 +17,18 @@ const App = () => {
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
   const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
 
-  // 2. Logic Hooks
+  // 2. Logic Hooks - ORDER MATTERS HERE
   const { isOllamaOnline } = useHardwareCheck();
   const { width: sidebarWidth, startResizing } = useSidebarResize(320);
+
+  // DECLARE MODELS FIRST
+  const models = useModelManager(isOllamaOnline, OLLAMA_URL);
+
+  // DECLARE VAULT AND STATE
+  const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
+  const [isGenealogyMode, setIsGenealogyMode] = React.useState(false);
+
+  // NOW PASS MODELS INTO USETHREADS
   const {
     threads,
     currentThread,
@@ -27,12 +36,22 @@ const App = () => {
     createNewThread,
     switchThread,
     deleteThread,
-  } = useThreads();
-  const [isGenealogyMode, setIsGenealogyMode] = React.useState(false);
+    renameThread,
+    isSummarizing,
+  } = useThreads(
+    {
+      id: models.activeProviderId,
+      name: models.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
+      url:
+        models.activeProviderId === "ollama"
+          ? `${OLLAMA_URL}/api/chat`
+          : "https://openrouter.ai/api/v1/chat/completions",
+      apiKey: models.activeProviderId === "openrouter" ? OPENROUTER_KEY : "",
+    },
+    models.selectedModel,
+  );
 
-  const models = useModelManager(isOllamaOnline, OLLAMA_URL);
-  const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
-
+  // FINALLY SETUP THE CHAT SESSION
   const { send, isProcessing, inputText, setInputText } = useChatSession(
     currentThread,
     setCurrentThread,
@@ -72,6 +91,8 @@ const App = () => {
         onSelectThread={switchThread}
         onNewChat={createNewThread}
         onDeleteThread={deleteThread}
+        onRenameThread={renameThread}
+        isSummarizing={isSummarizing}
       />
 
       <div

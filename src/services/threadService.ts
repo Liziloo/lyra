@@ -5,30 +5,56 @@ import {
   mkdir,
   remove,
   BaseDirectory,
+  exists,
 } from "@tauri-apps/plugin-fs";
+import { appLocalDataDir, join } from "@tauri-apps/api/path"; // Add these
 import { Thread } from "../types";
 
 const THREADS_DIR = "threads";
 
 export const threadService = {
+  async getThreadsPath() {
+    // This helps us see where the app is trying to save files
+    const base = await appLocalDataDir();
+    return await join(base, THREADS_DIR);
+  },
+
   async ensureDir() {
     try {
-      await mkdir(THREADS_DIR, {
+      const dirExists = await exists(THREADS_DIR, {
         baseDir: BaseDirectory.AppLocalData,
-        recursive: true,
       });
+      if (!dirExists) {
+        // Create the threads folder.
+        // recursive: true handles creating the parent (com.lyra.app) folder too.
+        await mkdir(THREADS_DIR, {
+          baseDir: BaseDirectory.AppLocalData,
+          recursive: true,
+        });
+        console.log("SUCCESS: Created threads directory");
+      }
     } catch (e) {
-      // Directory likely exists
+      console.error("FS Error (ensureDir):", e);
+      throw e; // Don't swallow this during debugging
     }
   },
 
   async saveThread(thread: Thread): Promise<void> {
-    await this.ensureDir();
-    const fileName = `${THREADS_DIR}/${thread.id}.json`;
-    const content = JSON.stringify(thread, null, 2);
-    await writeFile(fileName, new TextEncoder().encode(content), {
-      baseDir: BaseDirectory.AppLocalData,
-    });
+    try {
+      await this.ensureDir();
+      const fileName = `${THREADS_DIR}/${thread.id}.json`;
+      const content = JSON.stringify(thread, null, 2);
+
+      await writeFile(fileName, new TextEncoder().encode(content), {
+        baseDir: BaseDirectory.AppLocalData,
+      });
+
+      // Get the full path just for the console log so you can go find it!
+      const fullPath = await this.getThreadsPath();
+      console.log(`FILE SAVED AT: ${fullPath}/${thread.id}.json`);
+    } catch (e) {
+      console.error("CRITICAL SAVE ERROR:", e);
+    }
   },
 
   async getAllThreads(): Promise<Thread[]> {

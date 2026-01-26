@@ -1,10 +1,16 @@
+// src/hooks/useThreads.ts
 import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Thread } from "../types";
+import { Thread, Provider } from "../types";
 import { threadService } from "../services/threadService";
+import { generateThreadMetadata } from "../services/llmService";
 
-export const useThreads = () => {
+export const useThreads = (
+  currentProvider?: Provider,
+  currentModel?: string,
+) => {
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [currentThread, setCurrentThread] = useState<Thread>({
     id: uuidv4(),
     messages: [],
@@ -12,7 +18,6 @@ export const useThreads = () => {
     updatedAt: new Date(),
   });
 
-  // Load threads from disk on mount
   useEffect(() => {
     threadService.getAllThreads().then((saved) => {
       setThreads(saved);
@@ -27,34 +32,74 @@ export const useThreads = () => {
     setThreads(all);
   };
 
-  const createNewThread = () => {
-    const newThread: Thread = {
-      id: uuidv4(),
-      messages: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    setCurrentThread(newThread);
-  };
-
-  const switchThread = (id: string) => {
+  const switchThread = async (id: string) => {
     const target = threads.find((t) => t.id === id);
-    if (target) setCurrentThread(target);
+    if (!target) return;
+    setCurrentThread(target);
+
+    // Background Briefing: Only if we have a model/provider and no brief yet
+    if (
+      target.messages.length >= 2 &&
+      !target.brief &&
+      currentProvider &&
+      currentModel &&
+      !isSummarizing
+    ) {
+      setIsSummarizing(true);
+      try {
+        const brief = await generateThreadMetadata(
+          target.messages,
+          {
+            provider: currentProvider,
+            model: currentModel,
+            isGenealogyExpert: false,
+            contextNotes: "",
+          },
+          "brief",
+        );
+        await saveCurrentThread({ ...target, brief, updatedAt: new Date() });
+      } catch (e) {
+        console.error("Briefing failed", e);
+      } finally {
+        setIsSummarizing(false);
+      }
+    }
   };
 
-  const deleteThread = async (id: string) => {
-    await threadService.deleteThread(id);
-    const filtered = threads.filter((t) => t.id !== id);
-    setThreads(filtered);
-    if (currentThread.id === id) createNewThread();
+  const renameThread = async (id: string, name: string) => {
+    const updated = threads.map((t) =>
+      t.id === id ? { ...t, summary: name, isCustomName: true } : t,
+    );
+    setThreads(updated);
+    const target = updated.find((t) => t.id === id);
+    if (target) await threadService.saveThread(target);
   };
 
   return {
     threads,
     currentThread,
     setCurrentThread: saveCurrentThread,
-    createNewThread,
+    createNewThread: () =>
+      setCurrentThread({
+        id: uuidv4(),
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
     switchThread,
-    deleteThread,
+    deleteThread: async (id: string) => {
+      await threadService.deleteThread(id);
+      const filtered = threads.filter((t) => t.id !== id);
+      setThreads(filtered);
+      if (currentThread.id === id)
+        setCurrentThread({
+          id: uuidv4(),
+          messages: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+    },
+    renameThread,
+    isSummarizing,
   };
 };

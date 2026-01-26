@@ -56,7 +56,12 @@ src/
     ui/
       StatusBadge.tsx
   hooks/
+    useChatSession.ts
     useHardwareCheck.ts
+    useModelManager.ts
+    useSidebarResize.ts
+    useThreads.ts
+    useVaultContext.ts
   services/
     llmService.ts
     obsidianService.ts
@@ -145,143 +150,6 @@ export const ChatDivider: React.FC<{ label?: string }> = ({ label }) => {
 };
 </file>
 
-<file path="src/components/sidebar/Sidebar.tsx">
-import React from "react";
-import { StatusBadge } from "../ui/StatusBadge";
-import { ControlCard } from "./ControlCard";
-import { obsidianService } from "../../services/obsidianService";
-import { Thread } from "../../types";
-
-interface SidebarProps {
-  width: number;
-  isOllamaOnline: boolean;
-  activeProviderId: string;
-  setActiveProviderId: (id: "ollama" | "openrouter") => void;
-  selectedModel: string;
-  setSelectedModel: (m: string) => void;
-  availableModels: string[];
-  isCodingMode: boolean;
-  handleScanCodebase: () => void;
-  vaultPath: string;
-  setVaultPath: (p: string) => void;
-  setContextSnap: (s: string) => void;
-  isGenealogyMode: boolean;
-  setIsGenealogyMode: (b: boolean) => void;
-  threads: Thread[];
-  currentThreadId: string;
-  onSelectThread: (id: string) => void;
-  onNewChat: () => void;
-  onDeleteThread: (id: string) => void;
-}
-
-export const Sidebar: React.FC<SidebarProps> = (props) => {
-  return (
-    <aside
-      style={{ width: props.width }}
-      className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 sm:p-8 bg-white z-20 shadow-xl overflow-y-auto custom-scrollbar"
-    >
-      <div className="mb-10">
-        <h1 className="text-4xl sm:text-5xl font-black italic tracking-tighter text-graphite">
-          LYRA{" "}
-          <span className="text-brilliant-rose text-xl not-italic">V0.1</span>
-        </h1>
-        <div className="h-1.5 w-16 bg-brilliant-rose mt-2 rounded-full"></div>
-      </div>
-
-      <div className="mb-10">
-        <StatusBadge isOnline={props.isOllamaOnline} label="Workstation" />
-      </div>
-
-      <div className="space-y-6">
-        <ControlCard title="Intelligence" description="Hardware Mapping">
-          <select
-            value={props.activeProviderId}
-            onChange={(e) => props.setActiveProviderId(e.target.value as any)}
-            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
-          >
-            <option value="ollama">OLLAMA</option>
-            <option value="openrouter">OPENROUTER</option>
-          </select>
-
-          {props.activeProviderId === "ollama" ? (
-            <select
-              value={props.selectedModel}
-              onChange={(e) => props.setSelectedModel(e.target.value)}
-              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
-              disabled={!props.isOllamaOnline}
-            >
-              {props.availableModels.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type="text"
-              value={props.selectedModel}
-              onChange={(e) => props.setSelectedModel(e.target.value)}
-              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow text-xs outline-none font-bold"
-              placeholder="Model ID"
-            />
-          )}
-        </ControlCard>
-
-        <ControlCard title="Coding Mode" description="Recursive Scan">
-          <button
-            onClick={props.handleScanCodebase}
-            className={`w-full py-4 rounded-[2rem] border-2 font-black transition-all text-xs tracking-widest ${
-              props.isCodingMode
-                ? "bg-brilliant-rose border-graphite text-white shadow-md"
-                : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
-            }`}
-          >
-            {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
-          </button>
-        </ControlCard>
-
-        <ControlCard title="Vault" description="Obsidian knowledge">
-          <button
-            onClick={() =>
-              obsidianService
-                .pickVaultFolder()
-                .then((p) => p && props.setVaultPath(p))
-            }
-            className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[9px] truncate mb-2 italic"
-          >
-            {props.vaultPath || "MAP VAULT PATH..."}
-          </button>
-          <button
-            onClick={async () =>
-              props.setContextSnap(
-                await obsidianService.getRecentNotesContext(props.vaultPath),
-              )
-            }
-            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest"
-          >
-            SNAP CONTEXT
-          </button>
-        </ControlCard>
-
-        <div className="p-6 rounded-[2.5rem] bg-white border-4 border-brilliant-rose text-brilliant-rose shadow-lg mt-4">
-          <label className="flex items-center space-x-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={props.isGenealogyMode}
-              onChange={(e) => props.setIsGenealogyMode(e.target.checked)}
-              className="w-6 h-6 accent-brilliant-rose"
-            />
-            <span className="text-xs font-black uppercase tracking-tighter">
-              Genealogy Expert
-            </span>
-          </label>
-        </div>
-      </div>
-    </aside>
-  );
-};
-</file>
-
 <file path="src/components/ui/StatusBadge.tsx">
 import React from "react";
 
@@ -314,74 +182,251 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
 };
 </file>
 
-<file path="src/services/threadService.ts">
-import {
-  readDir,
-  readTextFile,
-  writeFile,
-  mkdir,
-  remove,
-  BaseDirectory,
-} from "@tauri-apps/plugin-fs";
-import { Thread } from "../types";
+<file path="src/hooks/useChatSession.ts">
+import { useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { sendMessage } from "../services/llmService";
+import { Thread, Message, Provider } from "../types";
 
-const THREADS_DIR = "threads";
+interface ChatSessionOptions {
+  activeProviderId: "ollama" | "openrouter";
+  selectedModel: string;
+  isGenealogyMode: boolean;
+  contextSnap: string;
+  openRouterKey: string;
+  ollamaBaseUrl: string;
+}
 
-export const threadService = {
-  async ensureDir() {
+export const useChatSession = (
+  thread: Thread,
+  onThreadUpdate: (t: Thread) => void,
+  clearContext: () => void,
+) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [inputText, setInputText] = useState(""); // <--- ADD THIS
+
+  const send = async (text: string, options: ChatSessionOptions) => {
+    if (!text.trim() || isProcessing) return;
+
+    const userMsg: Message = {
+      id: uuidv4(),
+      role: "user",
+      text,
+      timestamp: new Date(),
+    };
+
+    const updatedMessages = [...thread.messages, userMsg];
+
+    // UI Update: Clear input immediately and show user message
+    setInputText("");
+    setIsProcessing(true);
+
     try {
-      await mkdir(THREADS_DIR, {
-        baseDir: BaseDirectory.AppLocalData,
-        recursive: true,
+      const provider: Provider = {
+        id: options.activeProviderId,
+        name: options.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
+        url:
+          options.activeProviderId === "ollama"
+            ? `${options.ollamaBaseUrl}/api/chat`
+            : "https://openrouter.ai/api/v1/chat/completions",
+        apiKey:
+          options.activeProviderId === "openrouter"
+            ? options.openRouterKey
+            : "",
+      };
+
+      const aiResponse = await sendMessage(updatedMessages, {
+        provider,
+        model: options.selectedModel,
+        isGenealogyExpert: options.isGenealogyMode,
+        contextNotes: options.contextSnap,
       });
-    } catch (e) {
-      // Directory likely exists
+
+      const finalThread: Thread = {
+        ...thread,
+        messages: [
+          ...updatedMessages,
+          {
+            id: uuidv4(),
+            role: "assistant",
+            text: aiResponse,
+            timestamp: new Date(),
+          },
+        ],
+        updatedAt: new Date(),
+      };
+
+      onThreadUpdate(finalThread);
+      clearContext();
+    } catch (err: any) {
+      // If it fails, we might want to put the text back so the user doesn't lose it
+      setInputText(text);
+      alert(err.message);
+    } finally {
+      setIsProcessing(false);
     }
-  },
+  };
 
-  async saveThread(thread: Thread): Promise<void> {
-    await this.ensureDir();
-    const fileName = `${THREADS_DIR}/${thread.id}.json`;
-    const content = JSON.stringify(thread, null, 2);
-    await writeFile(fileName, new TextEncoder().encode(content), {
-      baseDir: BaseDirectory.AppLocalData,
-    });
-  },
+  // Return all four properties needed by App.tsx
+  return { send, isProcessing, inputText, setInputText };
+};
+</file>
 
-  async getAllThreads(): Promise<Thread[]> {
-    await this.ensureDir();
-    try {
-      const entries = await readDir(THREADS_DIR, {
-        baseDir: BaseDirectory.AppLocalData,
-      });
-      const threads: Thread[] = [];
+<file path="src/hooks/useModelManager.ts">
+import { useState, useEffect } from "react";
+import { getOllamaModels } from "../services/llmService";
 
-      for (const entry of entries) {
-        if (entry.name.endsWith(".json")) {
-          const content = await readTextFile(`${THREADS_DIR}/${entry.name}`, {
-            baseDir: BaseDirectory.AppLocalData,
-          });
-          const thread = JSON.parse(content);
-          // Convert string dates back to Date objects
-          thread.updatedAt = new Date(thread.updatedAt);
-          thread.createdAt = new Date(thread.createdAt);
-          threads.push(thread);
+export const useModelManager = (isOllamaOnline: boolean, baseUrl: string) => {
+  const [activeProviderId, setActiveProviderId] = useState<
+    "ollama" | "openrouter"
+  >("ollama");
+  const [selectedModel, setSelectedModel] = useState("llama3.2");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (isOllamaOnline && activeProviderId === "ollama") {
+      getOllamaModels(baseUrl).then((models) => {
+        setAvailableModels(models);
+        if (models.length > 0 && !models.includes(selectedModel)) {
+          setSelectedModel(models[0]);
         }
-      }
-      return threads.sort(
-        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-      );
-    } catch (e) {
-      console.error("Failed to load threads", e);
-      return [];
+      });
     }
-  },
+  }, [isOllamaOnline, activeProviderId, baseUrl]);
 
-  async deleteThread(id: string): Promise<void> {
-    await remove(`${THREADS_DIR}/${id}.json`, {
-      baseDir: BaseDirectory.AppLocalData,
+  return {
+    activeProviderId,
+    setActiveProviderId,
+    selectedModel,
+    setSelectedModel,
+    availableModels,
+  };
+};
+</file>
+
+<file path="src/hooks/useSidebarResize.ts">
+import { useState, useEffect, useRef } from "react";
+
+export const useSidebarResize = (initialWidth: number) => {
+  const [width, setWidth] = useState(initialWidth);
+  const isResizing = useRef(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      setWidth(Math.max(260, Math.min(600, e.clientX)));
+    };
+    const handleMouseUp = () => (isResizing.current = false);
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  return { width, startResizing: () => (isResizing.current = true) };
+};
+</file>
+
+<file path="src/hooks/useThreads.ts">
+import { useState, useEffect } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { Thread } from "../types";
+import { threadService } from "../services/threadService";
+
+export const useThreads = () => {
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [currentThread, setCurrentThread] = useState<Thread>({
+    id: uuidv4(),
+    messages: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  // Load threads from disk on mount
+  useEffect(() => {
+    threadService.getAllThreads().then((saved) => {
+      setThreads(saved);
+      if (saved.length > 0) setCurrentThread(saved[0]);
     });
-  },
+  }, []);
+
+  const saveCurrentThread = async (updatedThread: Thread) => {
+    setCurrentThread(updatedThread);
+    await threadService.saveThread(updatedThread);
+    const all = await threadService.getAllThreads();
+    setThreads(all);
+  };
+
+  const createNewThread = () => {
+    const newThread: Thread = {
+      id: uuidv4(),
+      messages: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    setCurrentThread(newThread);
+  };
+
+  const switchThread = (id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (target) setCurrentThread(target);
+  };
+
+  const deleteThread = async (id: string) => {
+    await threadService.deleteThread(id);
+    const filtered = threads.filter((t) => t.id !== id);
+    setThreads(filtered);
+    if (currentThread.id === id) createNewThread();
+  };
+
+  return {
+    threads,
+    currentThread,
+    setCurrentThread: saveCurrentThread,
+    createNewThread,
+    switchThread,
+    deleteThread,
+  };
+};
+</file>
+
+<file path="src/hooks/useVaultContext.ts">
+import { useState } from "react";
+import { obsidianService } from "../services/obsidianService";
+import { projectService } from "../services/projectService";
+
+export const useVaultContext = (initialPath: string) => {
+  const [vaultPath, setVaultPath] = useState(initialPath);
+  const [contextSnap, setContextSnap] = useState("");
+  const [isCodingMode, setIsCodingMode] = useState(false);
+
+  const handleScanCodebase = async () => {
+    const path = await obsidianService.pickVaultFolder();
+    if (path) {
+      const map = await projectService.scanProject(path);
+      setContextSnap(`[CODEBASE SCAN: ${path}]\n${map}`);
+      setIsCodingMode(true);
+    }
+  };
+
+  const snapRecentNotes = async () => {
+    const notes = await obsidianService.getRecentNotesContext(vaultPath);
+    setContextSnap(notes);
+  };
+
+  return {
+    vaultPath,
+    setVaultPath,
+    contextSnap,
+    setContextSnap,
+    isCodingMode,
+    setIsCodingMode,
+    handleScanCodebase,
+    snapRecentNotes,
+  };
 };
 </file>
 
@@ -504,6 +549,129 @@ export const ControlCard: React.FC<ControlCardProps> = ({
       </div>
       <div className="flex flex-col gap-2">{children}</div>
     </div>
+  );
+};
+</file>
+
+<file path="src/components/sidebar/Sidebar.tsx">
+import React from "react";
+import { StatusBadge } from "../ui/StatusBadge";
+import { ControlCard } from "./ControlCard";
+import { obsidianService } from "../../services/obsidianService";
+import { Thread } from "../../types";
+
+interface SidebarProps {
+  width: number;
+  isOllamaOnline: boolean;
+  activeProviderId: string;
+  setActiveProviderId: (id: "ollama" | "openrouter") => void;
+  selectedModel: string;
+  setSelectedModel: (m: string) => void;
+  availableModels: string[];
+  isCodingMode: boolean;
+  handleScanCodebase: () => void;
+  vaultPath: string;
+  setVaultPath: (p: string) => void;
+  setContextSnap: (s: string) => void;
+  isGenealogyMode: boolean;
+  setIsGenealogyMode: (b: boolean) => void;
+  threads: Thread[];
+  currentThreadId: string;
+  onSelectThread: (id: string) => void;
+  onNewChat: () => void;
+  onDeleteThread: (id: string) => void;
+}
+
+export const Sidebar: React.FC<SidebarProps> = (props) => {
+  return (
+    <aside
+      style={{ width: props.width }}
+      className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 sm:p-8 bg-white z-20 shadow-xl overflow-y-auto custom-scrollbar"
+    >
+      <div className="mb-10">
+        <h1 className="text-4xl sm:text-5xl font-black italic tracking-tighter text-graphite">
+          LYRA{" "}
+          <span className="text-brilliant-rose text-xl not-italic">V0.1</span>
+        </h1>
+        <div className="h-1.5 w-16 bg-brilliant-rose mt-2 rounded-full"></div>
+      </div>
+
+      <div className="mb-10">
+        <StatusBadge isOnline={props.isOllamaOnline} label="Workstation" />
+      </div>
+
+      <div className="space-y-6">
+        <ControlCard title="Intelligence" description="Hardware Mapping">
+          <select
+            value={props.activeProviderId}
+            onChange={(e) => props.setActiveProviderId(e.target.value as any)}
+            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
+          >
+            <option value="ollama">OLLAMA</option>
+            <option value="openrouter">OPENROUTER</option>
+          </select>
+
+          {props.activeProviderId === "ollama" ? (
+            <select
+              value={props.selectedModel}
+              onChange={(e) => props.setSelectedModel(e.target.value)}
+              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
+              disabled={!props.isOllamaOnline}
+            >
+              {props.availableModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={props.selectedModel}
+              onChange={(e) => props.setSelectedModel(e.target.value)}
+              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow text-xs outline-none font-bold"
+              placeholder="Model ID"
+            />
+          )}
+        </ControlCard>
+
+        <ControlCard title="Coding Mode" description="Recursive Scan">
+          <button
+            onClick={props.handleScanCodebase}
+            className={`w-full py-4 rounded-[2rem] border-2 font-black transition-all text-xs tracking-widest ${
+              props.isCodingMode
+                ? "bg-brilliant-rose border-graphite text-white shadow-md"
+                : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
+            }`}
+          >
+            {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
+          </button>
+        </ControlCard>
+
+        <ControlCard title="Vault" description="Obsidian knowledge">
+          <button
+            onClick={() =>
+              obsidianService
+                .pickVaultFolder()
+                .then((p) => p && props.setVaultPath(p))
+            }
+            className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[9px] truncate mb-2 italic"
+          >
+            {props.vaultPath || "MAP VAULT PATH..."}
+          </button>
+          <button
+            onClick={async () =>
+              props.setContextSnap(
+                await obsidianService.getRecentNotesContext(props.vaultPath),
+              )
+            }
+            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest"
+          >
+            SNAP CONTEXT
+          </button>
+        </ControlCard>
+      </div>
+    </aside>
   );
 };
 </file>
@@ -637,6 +805,85 @@ export const projectService = {
     } catch (e) {
       return "[Error scanning directory]";
     }
+  },
+};
+</file>
+
+<file path="src/services/threadService.ts">
+import {
+  readDir,
+  readTextFile,
+  writeFile,
+  mkdir,
+  remove,
+  BaseDirectory,
+} from "@tauri-apps/plugin-fs";
+import { Thread } from "../types";
+
+const THREADS_DIR = "threads";
+
+export const threadService = {
+  async ensureDir() {
+    try {
+      await mkdir(THREADS_DIR, {
+        baseDir: BaseDirectory.AppLocalData,
+        recursive: true,
+      });
+    } catch (e) {
+      // Directory likely exists
+    }
+  },
+
+  async saveThread(thread: Thread): Promise<void> {
+    await this.ensureDir();
+    const fileName = `${THREADS_DIR}/${thread.id}.json`;
+    const content = JSON.stringify(thread, null, 2);
+    await writeFile(fileName, new TextEncoder().encode(content), {
+      baseDir: BaseDirectory.AppLocalData,
+    });
+  },
+
+  async getAllThreads(): Promise<Thread[]> {
+    await this.ensureDir();
+    try {
+      const entries = await readDir(THREADS_DIR, {
+        baseDir: BaseDirectory.AppLocalData,
+      });
+      const threads: Thread[] = [];
+
+      for (const entry of entries) {
+        if (entry.name.endsWith(".json")) {
+          const content = await readTextFile(`${THREADS_DIR}/${entry.name}`, {
+            baseDir: BaseDirectory.AppLocalData,
+          });
+          const parsed = JSON.parse(content);
+
+          // Hydrate dates for the thread and every message
+          const thread: Thread = {
+            ...parsed,
+            createdAt: new Date(parsed.createdAt),
+            updatedAt: new Date(parsed.updatedAt),
+            messages: parsed.messages.map((m: any) => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })),
+          };
+          threads.push(thread);
+        }
+      }
+      return threads.sort(
+        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+      );
+    } catch (e) {
+      console.error("Failed to load threads", e);
+      return [];
+    }
+  },
+
+  async deleteThread(id: string): Promise<void> {
+    await remove(`${THREADS_DIR}/${id}.json`, {
+      baseDir: BaseDirectory.AppLocalData,
+    });
   },
 };
 </file>
@@ -1185,17 +1432,13 @@ dist-ssr
 </file>
 
 <file path="src/App.tsx">
-import { useState, useEffect, useRef } from "react";
-import { v4 as uuidv4 } from "uuid";
-
-// Types
-import { Message, Provider, Thread } from "./types";
-
-// Services & Hooks
-import { getOllamaModels, sendMessage } from "./services/llmService";
-import { obsidianService } from "./services/obsidianService";
-import { projectService } from "./services/projectService";
+import React, { useRef, useEffect } from "react";
 import { useHardwareCheck } from "./hooks/useHardwareCheck";
+import { useSidebarResize } from "./hooks/useSidebarResize";
+import { useModelManager } from "./hooks/useModelManager";
+import { useVaultContext } from "./hooks/useVaultContext";
+import { useThreads } from "./hooks/useThreads";
+import { useChatSession } from "./hooks/useChatSession";
 
 // Components
 import { Sidebar } from "./components/sidebar/Sidebar";
@@ -1203,163 +1446,71 @@ import { MessageBubble } from "./components/chat/MessageBubble";
 import { ChatDivider } from "./components/chat/ChatDivider";
 
 const App = () => {
-  // --- 1. Layout & State ---
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const isResizing = useRef(false);
-
-  const ollamaBaseUrl =
+  // 1. Config Constants
+  const OLLAMA_URL =
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
-  const [vaultPath, setVaultPath] = useState<string>(
-    import.meta.env.VITE_OBSIDIAN_PATH || "",
+  const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
+
+  // 2. Logic Hooks
+  const { isOllamaOnline } = useHardwareCheck();
+  const { width: sidebarWidth, startResizing } = useSidebarResize(320);
+  const {
+    threads,
+    currentThread,
+    setCurrentThread,
+    createNewThread,
+    switchThread,
+    deleteThread,
+  } = useThreads();
+  const [isGenealogyMode, setIsGenealogyMode] = React.useState(false);
+
+  const models = useModelManager(isOllamaOnline, OLLAMA_URL);
+  const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
+
+  const { send, isProcessing, inputText, setInputText } = useChatSession(
+    currentThread,
+    setCurrentThread,
+    () => {
+      vault.setContextSnap("");
+      vault.setIsCodingMode(false);
+    },
   );
-  const [openRouterKey] = useState<string>(
-    import.meta.env.VITE_OPENROUTER_KEY || "",
-  );
-
-  const [contextSnap, setContextSnap] = useState<string>("");
-  const [isGenealogyMode, setIsGenealogyMode] = useState(false);
-  const [isCodingMode, setIsCodingMode] = useState(false);
-
-  const [activeProviderId, setActiveProviderId] = useState<
-    "ollama" | "openrouter"
-  >("ollama");
-  const [selectedModel, setSelectedModel] = useState("llama3.2");
-  const [inputText, setInputText] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-
-  const [thread, setThread] = useState<Thread>({
-    id: uuidv4(),
-    messages: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const { isOllamaOnline } = useHardwareCheck();
-
-  // --- 2. Handlers & Effects ---
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing.current) return;
-      setSidebarWidth(Math.max(260, Math.min(600, e.clientX)));
-    };
-    const handleMouseUp = () => {
-      isResizing.current = false;
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, []);
-
-  useEffect(() => {
-    const refreshModels = async () => {
-      if (isOllamaOnline && activeProviderId === "ollama") {
-        const models = await getOllamaModels(ollamaBaseUrl);
-        setAvailableModels(models);
-        if (models.length > 0 && !models.includes(selectedModel)) {
-          setSelectedModel(models[0]);
-        }
-      }
-    };
-    refreshModels();
-  }, [isOllamaOnline, activeProviderId, ollamaBaseUrl]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [thread.messages, isProcessing]);
-
-  const handleScanCodebase = async () => {
-    const path = await obsidianService.pickVaultFolder();
-    if (path) {
-      const map = await projectService.scanProject(path);
-      setContextSnap(`[CODEBASE SCAN: ${path}]\n${map}`);
-      setIsCodingMode(true);
-      alert("Hardware context updated with project structure.");
-    }
-  };
-
-  const handleSend = async () => {
-    if (!inputText.trim() || isProcessing) return;
-    const userMsg: Message = {
-      id: uuidv4(),
-      role: "user",
-      text: inputText,
-      timestamp: new Date(),
-    };
-    const newMessages = [...thread.messages, userMsg];
-    setThread({ ...thread, messages: newMessages });
-    setInputText("");
-    setIsProcessing(true);
-
-    try {
-      const provider: Provider = {
-        id: activeProviderId,
-        name: activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
-        url:
-          activeProviderId === "ollama"
-            ? `${ollamaBaseUrl}/api/chat`
-            : "https://openrouter.ai/api/v1/chat/completions",
-        apiKey: activeProviderId === "openrouter" ? openRouterKey : "",
-      };
-
-      const aiResponseText = await sendMessage(newMessages, {
-        provider,
-        model: selectedModel,
-        isGenealogyExpert: isGenealogyMode,
-        contextNotes: contextSnap,
-      });
-
-      setThread((prev) => ({
-        ...prev,
-        messages: [
-          ...prev.messages,
-          {
-            id: uuidv4(),
-            role: "assistant",
-            text: aiResponseText,
-            timestamp: new Date(),
-          },
-        ],
-        updatedAt: new Date(),
-      }));
-      setContextSnap("");
-      setIsCodingMode(false);
-    } catch (err: any) {
-      alert(`Error: ${err.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [currentThread.messages, isProcessing]);
 
   return (
-    <div className="flex h-screen w-full bg-bright-snow text-graphite overflow-hidden font-sans">
+    <div className="flex h-screen w-full bg-bright-snow text-graphite overflow-hidden">
       <Sidebar
         width={sidebarWidth}
         isOllamaOnline={isOllamaOnline}
-        activeProviderId={activeProviderId}
-        setActiveProviderId={setActiveProviderId}
-        selectedModel={selectedModel}
-        setSelectedModel={setSelectedModel}
-        availableModels={availableModels}
-        isCodingMode={isCodingMode}
-        handleScanCodebase={handleScanCodebase}
-        vaultPath={vaultPath}
-        setVaultPath={setVaultPath}
-        setContextSnap={setContextSnap}
+        activeProviderId={models.activeProviderId}
+        setActiveProviderId={models.setActiveProviderId}
+        selectedModel={models.selectedModel}
+        setSelectedModel={models.setSelectedModel}
+        availableModels={models.availableModels}
+        isCodingMode={vault.isCodingMode}
+        handleScanCodebase={vault.handleScanCodebase}
+        vaultPath={vault.vaultPath}
+        setVaultPath={vault.setVaultPath}
+        setContextSnap={vault.snapRecentNotes}
         isGenealogyMode={isGenealogyMode}
         setIsGenealogyMode={setIsGenealogyMode}
+        threads={threads}
+        currentThreadId={currentThread.id}
+        onSelectThread={switchThread}
+        onNewChat={createNewThread}
+        onDeleteThread={deleteThread}
       />
 
-      {/* DRAG HANDLE: The Gold Zipper */}
       <div
-        onMouseDown={() => (isResizing.current = true)}
-        className="w-1.5 cursor-col-resize bg-saffron hover:bg-brilliant-rose transition-all z-50 shadow-xl"
+        onMouseDown={startResizing}
+        className="w-1.5 cursor-col-resize bg-saffron hover:bg-brilliant-rose z-50"
       />
 
       <main className="flex-grow flex flex-col relative bg-bright-snow">
@@ -1367,68 +1518,67 @@ const App = () => {
           ref={scrollRef}
           className="flex-grow overflow-y-auto px-8 sm:px-16 py-12 space-y-10 custom-scrollbar"
         >
-          {thread.messages.length === 0 && (
+          {currentThread.messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center opacity-30">
-              <h2 className="text-5xl font-thin tracking-[0.5em] text-graphite uppercase mb-4 italic text-center">
+              <h2 className="text-5xl font-thin tracking-[0.5em] uppercase italic">
                 Lyra
               </h2>
-              <div className="w-24 h-1 bg-saffron rounded-full"></div>
+              <div className="w-24 h-1 bg-saffron rounded-full mt-4"></div>
             </div>
           )}
-          {thread.messages.map((m, idx) => (
+
+          {currentThread.messages.map((m, idx) => (
             <div key={m.id}>
               {idx > 0 && idx % 4 === 0 && <ChatDivider label="Continuity" />}
               <MessageBubble message={m} />
             </div>
           ))}
+
           {isProcessing && (
-            <div className="flex justify-start ml-10">
-              <div className="text-brilliant-rose font-black italic text-xs animate-pulse tracking-widest uppercase">
-                Consulting Intelligence...
-              </div>
+            <div className="text-brilliant-rose font-black italic text-xs animate-pulse tracking-widest uppercase ml-10">
+              Consulting Intelligence...
             </div>
           )}
         </div>
 
-        {/* INPUT DOCK */}
+        {/* INPUT DOCK - Could be extracted to its own component if it grows */}
         <div className="p-6 sm:p-10 bg-white border-t-2 border-saffron/10">
           <div className="max-w-5xl mx-auto flex items-end space-x-6">
-            <div className="flex-grow relative group">
+            <div className="flex-grow relative">
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={(e) =>
-                  e.key === "Enter" && !e.shiftKey && handleSend()
+                  e.key === "Enter" &&
+                  !e.shiftKey &&
+                  send(inputText, {
+                    activeProviderId: models.activeProviderId,
+                    selectedModel: models.selectedModel,
+                    isGenealogyMode,
+                    contextSnap: vault.contextSnap,
+                    openRouterKey: OPENROUTER_KEY,
+                    ollamaBaseUrl: OLLAMA_URL,
+                  })
                 }
-                placeholder="Direct Lyra..."
-                className="w-full p-6 sm:p-8 pr-20 bg-bright-snow border-2 border-graphite rounded-[2.5rem] sm:rounded-[3rem] text-base sm:text-lg text-graphite outline-none focus:border-brilliant-rose focus:ring-4 focus:ring-brilliant-rose/5 transition-all resize-none h-28 sm:h-32 font-bold placeholder:italic"
+                placeholder="Hello, Lyra..."
+                className="w-full p-6 bg-bright-snow border-2 border-graphite rounded-[2.5rem] text-lg font-bold outline-none focus:border-brilliant-rose h-32 resize-none"
               />
               <button
-                onClick={handleSend}
-                disabled={isProcessing}
-                className="absolute right-4 bottom-4 sm:right-6 sm:bottom-6 bg-brilliant-rose text-white w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all border-4 border-white"
+                onClick={() =>
+                  send(inputText, {
+                    activeProviderId: models.activeProviderId,
+                    selectedModel: models.selectedModel,
+                    isGenealogyMode,
+                    contextSnap: vault.contextSnap,
+                    openRouterKey: OPENROUTER_KEY,
+                    ollamaBaseUrl: OLLAMA_URL,
+                  })
+                }
+                className="absolute right-6 bottom-6 bg-brilliant-rose text-white w-14 h-14 rounded-full shadow-lg"
               >
-                <svg
-                  className="w-6 h-6 sm:w-7 sm:h-7"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="4"
-                    d="M5 10l7-7m0 0l7 7m-7-7v18"
-                  />
-                </svg>
+                ↑
               </button>
             </div>
-            <button
-              onClick={() => obsidianService.saveChatToVault(vaultPath, thread)}
-              className="hidden sm:block p-6 bg-white border-4 border-saffron text-graphite font-black text-xs rounded-[2rem] shadow-xl hover:bg-saffron hover:text-white transition-all whitespace-nowrap uppercase tracking-widest"
-            >
-              SAVE TO VAULT
-            </button>
           </div>
         </div>
       </main>

@@ -1,3 +1,4 @@
+// src/services/llmService.ts
 import { fetch } from "@tauri-apps/plugin-http";
 import { Message, Provider } from "../types";
 
@@ -6,89 +7,71 @@ export interface LLMOptions {
   model: string;
   isGenealogyExpert: boolean;
   contextNotes: string;
+  systemOverride?: string; // Add this to allow custom context injection
 }
 
 export const sendMessage = async (
   messages: Message[],
   options: LLMOptions,
 ): Promise<string> => {
-  const { provider, model, isGenealogyExpert, contextNotes } = options;
+  const { provider, model, isGenealogyExpert, contextNotes, systemOverride } =
+    options;
 
-  // 1. Construct System Message
-  let systemContent = isGenealogyExpert
-    ? "You are a genealogy expert. Cite sources and note missing evidence."
-    : "You are a helpful AI assistant.";
+  // Use override if provided (for the Briefing system), otherwise use default logic
+  let systemContent =
+    systemOverride ||
+    (isGenealogyExpert
+      ? "You are a genealogy expert. Cite sources and note missing evidence."
+      : "You are a helpful AI assistant.");
 
-  if (contextNotes) {
+  if (contextNotes && !systemOverride) {
     systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
   }
 
-  // 2. Map messages to API format
   const apiMessages = [
     { role: "system", content: systemContent },
-    ...messages.map((m) => ({
-      role: m.role,
-      content: m.text,
-    })),
+    ...messages.map((m) => ({ role: m.role, content: m.text })),
   ];
 
-  const isOllama = provider.url.includes("11434") || provider.id === "ollama";
-
-  const body = JSON.stringify({
-    model: model,
-    messages: apiMessages,
-    stream: false,
+  const response = await fetch(provider.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
+    },
+    body: JSON.stringify({ model, messages: apiMessages, stream: false }),
   });
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const data = (await response.json()) as any;
+  return provider.id === "ollama"
+    ? data.message.content
+    : data.choices[0].message.content;
+};
 
-  if (provider.apiKey) {
-    headers["Authorization"] = `Bearer ${provider.apiKey}`;
-  }
+export const generateThreadMetadata = async (
+  messages: Message[],
+  options: LLMOptions,
+  mode: "title" | "brief",
+): Promise<string> => {
+  const prompt =
+    mode === "title"
+      ? "Create a 3-5 word concise title for this conversation. Return ONLY the title text."
+      : "Summarize the key facts and goals of this chat into a 2-paragraph 'Situational Brief' for continuity.";
 
-  try {
-    // Use Tauri's fetch to bypass CORS and use native networking
-    const response = await fetch(provider.url, {
-      method: "POST",
-      headers,
-      body,
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json().catch(() => ({}))) as any;
-      throw new Error(
-        errorData.error?.message || `API Error: ${response.status}`,
-      );
-    }
-
-    const data = (await response.json()) as any;
-
-    if (isOllama) {
-      return data.message.content;
-    } else {
-      return data.choices[0].message.content;
-    }
-  } catch (error) {
-    console.error("LLM Service Error:", error);
-    throw error;
-  }
+  return sendMessage(messages, {
+    ...options,
+    systemOverride: prompt,
+    contextNotes: "",
+  });
 };
 
 export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
   try {
-    const response = await fetch(`${baseUrl}/api/tags`, {
-      method: "GET",
-    });
-
+    const response = await fetch(`${baseUrl}/api/tags`);
     if (!response.ok) return [];
-
     const data = (await response.json()) as { models: { name: string }[] };
-    // Extract just the names (e.g., "llama3.2:latest")
     return data.models.map((m) => m.name);
-  } catch (error) {
-    console.error("Failed to fetch Ollama models:", error);
+  } catch {
     return [];
   }
 };

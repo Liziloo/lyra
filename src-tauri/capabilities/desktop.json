@@ -6,6 +6,13 @@
   "permissions": [
     "core:path:allow-join",
     "dialog:allow-open",
+    "fs:default",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$APPLOCALDATA/**" }]
+    },
     "fs:allow-read-dir",
     "fs:allow-read-file",
     "fs:allow-write-file",
