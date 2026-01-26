@@ -1,6 +1,5 @@
 // src/App.tsx
-
-import { useRef, useEffect } from "react";
+import React, { useRef, useEffect } from "react";
 import { useHardwareCheck } from "./hooks/useHardwareCheck";
 import { useSidebarResize } from "./hooks/useSidebarResize";
 import { useModelManager } from "./hooks/useModelManager";
@@ -8,6 +7,10 @@ import { useVaultContext } from "./hooks/useVaultContext";
 import { useThreads } from "./hooks/useThreads";
 import { useChatSession } from "./hooks/useChatSession";
 
+// Services
+import { obsidianService } from "./services/obsidianService";
+
+// Components
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { MessageBubble } from "./components/chat/MessageBubble";
 import { ChatDivider } from "./components/chat/ChatDivider";
@@ -17,12 +20,16 @@ const App = () => {
   const OLLAMA_URL =
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
   const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
+  const OBSIDIAN_PATH = import.meta.env.VITE_OBSIDIAN_PATH || "";
   const METADATA_MODEL = "llama3.2:1b";
+
+  // NEW STATE: Vault Toggle
+  const [isVaultActive, setIsVaultActive] = React.useState(false);
 
   const { isOllamaOnline } = useHardwareCheck();
   const { width: sidebarWidth, startResizing } = useSidebarResize(320);
   const models = useModelManager(isOllamaOnline, OLLAMA_URL);
-  const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
+  const vault = useVaultContext(OBSIDIAN_PATH);
 
   const {
     threads,
@@ -50,12 +57,12 @@ const App = () => {
     currentThread,
     setCurrentThread,
     () => {
-      vault.setContextSnap("");
       vault.setIsCodingMode(false);
     },
     METADATA_MODEL,
   );
 
+  // 3. Auto-scroll Logic
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -63,6 +70,35 @@ const App = () => {
       behavior: "smooth",
     });
   }, [currentThread.messages, isProcessing]);
+
+  // 4. Integrated Send Handler (The "Invisible" Context Snapper)
+  const handleSend = async () => {
+    if (!inputText.trim() || isProcessing) return;
+
+    let finalContext = "";
+
+    // 1. If Coding Mode is ON, we always send the file structure scan
+    if (vault.isCodingMode) {
+      finalContext = vault.contextSnap;
+    }
+    // 2. Else, if the User explicitly toggled the Vault Link
+    else if (isVaultActive && OBSIDIAN_PATH) {
+      try {
+        finalContext =
+          await obsidianService.getRecentNotesContext(OBSIDIAN_PATH);
+      } catch (e) {
+        console.error("Vault snap failed:", e);
+      }
+    }
+
+    send(inputText, {
+      activeProviderId: models.activeProviderId,
+      selectedModel: models.selectedModel,
+      contextSnap: finalContext,
+      openRouterKey: OPENROUTER_KEY,
+      ollamaBaseUrl: OLLAMA_URL,
+    });
+  };
 
   return (
     <div className="flex h-screen w-full bg-bright-snow text-graphite overflow-hidden">
@@ -76,9 +112,6 @@ const App = () => {
         availableModels={models.availableModels}
         isCodingMode={vault.isCodingMode}
         handleScanCodebase={vault.handleScanCodebase}
-        vaultPath={vault.vaultPath}
-        setVaultPath={vault.setVaultPath}
-        setContextSnap={vault.snapRecentNotes}
         threads={threads}
         currentThreadId={currentThread.id}
         onSelectThread={switchThread}
@@ -90,7 +123,7 @@ const App = () => {
 
       <div
         onMouseDown={startResizing}
-        className="w-1.5 cursor-col-resize bg-saffron hover:bg-brilliant-rose z-50"
+        className="w-1.5 cursor-col-resize bg-saffron hover:bg-brilliant-rose z-50 transition-colors"
       />
 
       <main className="flex-grow flex flex-col relative bg-bright-snow">
@@ -125,15 +158,9 @@ const App = () => {
           value={inputText}
           onChange={setInputText}
           isProcessing={isProcessing}
-          onSend={() =>
-            send(inputText, {
-              activeProviderId: models.activeProviderId,
-              selectedModel: models.selectedModel,
-              contextSnap: vault.contextSnap,
-              openRouterKey: OPENROUTER_KEY,
-              ollamaBaseUrl: OLLAMA_URL,
-            })
-          }
+          onSend={handleSend}
+          isVaultActive={isVaultActive}
+          onToggleVault={() => setIsVaultActive(!isVaultActive)}
         />
       </main>
     </div>
