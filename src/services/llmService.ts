@@ -55,13 +55,11 @@ export const generateThreadMetadata = async (
 ): Promise<string> => {
   const { provider, model } = options;
 
-  // 1. STACKED INSTRUCTION: Use System role for strict formatting
   const systemInstruction =
     mode === "title"
-      ? "You are a specialized metadata utility. Your ONLY task is to provide a 3-5 word succinct title for the provided conversation. Do NOT use markdown. Do NOT use quotes. Do NOT explain your choice. Do NOT use conversational filler. Response must be plain text."
-      : "Summarize the key facts and goals of this chat into a 2-paragraph Situational Brief. Focus on facts, not conversational fluff.";
+      ? "You are a metadata utility. Provide a 3-5 word plain text title. NO quotes, NO thinking, NO 'Title:', NO filler."
+      : "Provide a 2-paragraph Situational Brief for continuity. Focus on facts. NO thinking, NO filler.";
 
-  // We only send the last few messages to save tokens and focus the model on the current topic
   const contextSnippet = messages
     .slice(-4)
     .map((m) => `${m.role.toUpperCase()}: ${m.text}`)
@@ -69,8 +67,8 @@ export const generateThreadMetadata = async (
 
   const userPrompt =
     mode === "title"
-      ? `Based on this exchange, what is the succinct topic?\n\n${contextSnippet}`
-      : `Generate a brief for this exchange:\n\n${contextSnippet}`;
+      ? `Topic for this conversation:\n\n${contextSnippet}`
+      : `Brief this exchange:\n\n${contextSnippet}`;
 
   const apiMessages = [
     { role: "system", content: systemInstruction },
@@ -93,30 +91,30 @@ export const generateThreadMetadata = async (
         ? data.message.content
         : data.choices[0].message.content;
 
-    // 2. AGGRESSIVE CLEANING
+    // AGGRESSIVE CLEANING
     let cleaned =
       rawContent
-        .replace(/<think>[\s\S]*?<\/think>/gi, "") // Remove reasoning tags
-        .split("\n") // Split by lines
-        .map((line: string) => line.trim()) // Trim each line
-        .filter((line: string) => line.length > 0) // Remove empty lines
-        .shift() || ""; // Take only the FIRST meaningful line
+        .replace(/<think>[\s\S]*?<\/think>/gi, "") // Remove reasoning
+        .split("\n")
+        .map((line: string) => line.trim())
+        .filter((line: string) => line.length > 0)
+        .shift() || ""; // Get first real line
 
-    // 3. NOISE REDUCTION: Remove common model filler prefixes
     cleaned = cleaned
-      .replace(/^(the title is|here is a title|topic|subject)[:\s]*/gi, "")
-      .replace(/["'#*]/g, "") // Remove quotes, hashes, and asterisks
+      .replace(/^(title|topic|subject|summary)[:\s]*/gi, "") // Remove common prefixes
+      .replace(/^\d+\.\s*/, "") // Remove "1. " numbering
+      .replace(/["'#*]/g, "") // Remove formatting chars
       .trim();
 
-    // Final check for length and quality
-    if (mode === "title" && (cleaned.length < 2 || cleaned.length > 60)) {
-      return messages[0]?.text.substring(0, 25) + "...";
+    // Ensure it's actually succinct for titles
+    if (mode === "title" && cleaned.length > 50) {
+      cleaned = cleaned.substring(0, 47) + "...";
     }
 
-    return cleaned;
+    return cleaned || (mode === "title" ? "New Transmission" : "");
   } catch (error) {
     console.error("Metadata generation failed:", error);
-    return messages[0]?.text.substring(0, 25) + "...";
+    return mode === "title" ? "New Transmission" : "";
   }
 };
 

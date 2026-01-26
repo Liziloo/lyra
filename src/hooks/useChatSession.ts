@@ -17,6 +17,7 @@ export const useChatSession = (
   thread: Thread,
   onThreadUpdate: (t: Thread) => void,
   clearContext: () => void,
+  metadataModel: string,
 ) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputText, setInputText] = useState("");
@@ -76,14 +77,13 @@ export const useChatSession = (
         updatedAt: new Date(),
       };
 
-      // 3. Auto-Title if it's a new conversation and not custom named
       if (thread.messages.length === 0 && !thread.isCustomName) {
         try {
           const title = await generateThreadMetadata(
             finalThread.messages,
             {
               provider,
-              model: options.selectedModel,
+              model: metadataModel, // FORCE UTILITY MODEL
               isGenealogyExpert: false,
               contextNotes: "",
             },

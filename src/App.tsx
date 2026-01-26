@@ -17,6 +17,10 @@ const App = () => {
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
   const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
 
+  // Define the specific model for background tasks
+  // llama3.2:1b is recommended as it's tiny, fast, and follows formatting well
+  const METADATA_MODEL = "llama3.2:1b";
+
   // 2. Logic Hooks - ORDER MATTERS HERE
   const { isOllamaOnline } = useHardwareCheck();
   const { width: sidebarWidth, startResizing } = useSidebarResize(320);
@@ -48,7 +52,7 @@ const App = () => {
           : "https://openrouter.ai/api/v1/chat/completions",
       apiKey: models.activeProviderId === "openrouter" ? OPENROUTER_KEY : "",
     },
-    models.selectedModel,
+    METADATA_MODEL,
   );
 
   // FINALLY SETUP THE CHAT SESSION
@@ -59,6 +63,7 @@ const App = () => {
       vault.setContextSnap("");
       vault.setIsCodingMode(false);
     },
+    METADATA_MODEL,
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);

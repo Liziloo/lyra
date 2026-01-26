@@ -7,7 +7,7 @@ import { generateThreadMetadata } from "../services/llmService";
 
 export const useThreads = (
   currentProvider?: Provider,
-  currentModel?: string,
+  metadataModel?: string,
 ) => {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -37,12 +37,12 @@ export const useThreads = (
     if (!target) return;
     setCurrentThread(target);
 
-    // Background Briefing: Only if we have a model/provider and no brief yet
+    // Background Briefing: Use the metadataModel
     if (
       target.messages.length >= 2 &&
       !target.brief &&
       currentProvider &&
-      currentModel &&
+      metadataModel &&
       !isSummarizing
     ) {
       setIsSummarizing(true);
@@ -51,7 +51,7 @@ export const useThreads = (
           target.messages,
           {
             provider: currentProvider,
-            model: currentModel,
+            model: metadataModel, // FORCE UTILITY MODEL
             isGenealogyExpert: false,
             contextNotes: "",
           },

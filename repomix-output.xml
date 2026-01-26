@@ -182,96 +182,6 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
 };
 </file>
 
-<file path="src/hooks/useChatSession.ts">
-import { useState } from "react";
-import { v4 as uuidv4 } from "uuid";
-import { sendMessage } from "../services/llmService";
-import { Thread, Message, Provider } from "../types";
-
-interface ChatSessionOptions {
-  activeProviderId: "ollama" | "openrouter";
-  selectedModel: string;
-  isGenealogyMode: boolean;
-  contextSnap: string;
-  openRouterKey: string;
-  ollamaBaseUrl: string;
-}
-
-export const useChatSession = (
-  thread: Thread,
-  onThreadUpdate: (t: Thread) => void,
-  clearContext: () => void,
-) => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [inputText, setInputText] = useState(""); // <--- ADD THIS
-
-  const send = async (text: string, options: ChatSessionOptions) => {
-    if (!text.trim() || isProcessing) return;
-
-    const userMsg: Message = {
-      id: uuidv4(),
-      role: "user",
-      text,
-      timestamp: new Date(),
-    };
-
-    const updatedMessages = [...thread.messages, userMsg];
-
-    // UI Update: Clear input immediately and show user message
-    setInputText("");
-    setIsProcessing(true);
-
-    try {
-      const provider: Provider = {
-        id: options.activeProviderId,
-        name: options.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
-        url:
-          options.activeProviderId === "ollama"
-            ? `${options.ollamaBaseUrl}/api/chat`
-            : "https://openrouter.ai/api/v1/chat/completions",
-        apiKey:
-          options.activeProviderId === "openrouter"
-            ? options.openRouterKey
-            : "",
-      };
-
-      const aiResponse = await sendMessage(updatedMessages, {
-        provider,
-        model: options.selectedModel,
-        isGenealogyExpert: options.isGenealogyMode,
-        contextNotes: options.contextSnap,
-      });
-
-      const finalThread: Thread = {
-        ...thread,
-        messages: [
-          ...updatedMessages,
-          {
-            id: uuidv4(),
-            role: "assistant",
-            text: aiResponse,
-            timestamp: new Date(),
-          },
-        ],
-        updatedAt: new Date(),
-      };
-
-      onThreadUpdate(finalThread);
-      clearContext();
-    } catch (err: any) {
-      // If it fails, we might want to put the text back so the user doesn't lose it
-      setInputText(text);
-      alert(err.message);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Return all four properties needed by App.tsx
-  return { send, isProcessing, inputText, setInputText };
-};
-</file>
-
 <file path="src/hooks/useModelManager.ts">
 import { useState, useEffect } from "react";
 import { getOllamaModels } from "../services/llmService";
@@ -327,69 +237,6 @@ export const useSidebarResize = (initialWidth: number) => {
   }, []);
 
   return { width, startResizing: () => (isResizing.current = true) };
-};
-</file>
-
-<file path="src/hooks/useThreads.ts">
-import { useState, useEffect } from "react";
-import { v4 as uuidv4 } from "uuid";
-import { Thread } from "../types";
-import { threadService } from "../services/threadService";
-
-export const useThreads = () => {
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [currentThread, setCurrentThread] = useState<Thread>({
-    id: uuidv4(),
-    messages: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
-  // Load threads from disk on mount
-  useEffect(() => {
-    threadService.getAllThreads().then((saved) => {
-      setThreads(saved);
-      if (saved.length > 0) setCurrentThread(saved[0]);
-    });
-  }, []);
-
-  const saveCurrentThread = async (updatedThread: Thread) => {
-    setCurrentThread(updatedThread);
-    await threadService.saveThread(updatedThread);
-    const all = await threadService.getAllThreads();
-    setThreads(all);
-  };
-
-  const createNewThread = () => {
-    const newThread: Thread = {
-      id: uuidv4(),
-      messages: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    setCurrentThread(newThread);
-  };
-
-  const switchThread = (id: string) => {
-    const target = threads.find((t) => t.id === id);
-    if (target) setCurrentThread(target);
-  };
-
-  const deleteThread = async (id: string) => {
-    await threadService.deleteThread(id);
-    const filtered = threads.filter((t) => t.id !== id);
-    setThreads(filtered);
-    if (currentThread.id === id) createNewThread();
-  };
-
-  return {
-    threads,
-    currentThread,
-    setCurrentThread: saveCurrentThread,
-    createNewThread,
-    switchThread,
-    deleteThread,
-  };
 };
 </file>
 
@@ -553,126 +400,115 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 };
 </file>
 
-<file path="src/components/sidebar/Sidebar.tsx">
-import React from "react";
-import { StatusBadge } from "../ui/StatusBadge";
-import { ControlCard } from "./ControlCard";
-import { obsidianService } from "../../services/obsidianService";
-import { Thread } from "../../types";
+<file path="src/hooks/useChatSession.ts">
+// src/hooks/useChatSession.ts
+import { useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { sendMessage, generateThreadMetadata } from "../services/llmService";
+import { Thread, Message, Provider } from "../types";
 
-interface SidebarProps {
-  width: number;
-  isOllamaOnline: boolean;
-  activeProviderId: string;
-  setActiveProviderId: (id: "ollama" | "openrouter") => void;
+interface ChatSessionOptions {
+  activeProviderId: "ollama" | "openrouter";
   selectedModel: string;
-  setSelectedModel: (m: string) => void;
-  availableModels: string[];
-  isCodingMode: boolean;
-  handleScanCodebase: () => void;
-  vaultPath: string;
-  setVaultPath: (p: string) => void;
-  setContextSnap: (s: string) => void;
   isGenealogyMode: boolean;
-  setIsGenealogyMode: (b: boolean) => void;
-  threads: Thread[];
-  currentThreadId: string;
-  onSelectThread: (id: string) => void;
-  onNewChat: () => void;
-  onDeleteThread: (id: string) => void;
+  contextSnap: string;
+  openRouterKey: string;
+  ollamaBaseUrl: string;
 }
 
-export const Sidebar: React.FC<SidebarProps> = (props) => {
-  return (
-    <aside
-      style={{ width: props.width }}
-      className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 sm:p-8 bg-white z-20 shadow-xl overflow-y-auto custom-scrollbar"
-    >
-      <div className="mb-10">
-        <h1 className="text-4xl sm:text-5xl font-black italic tracking-tighter text-graphite">
-          LYRA{" "}
-          <span className="text-brilliant-rose text-xl not-italic">V0.1</span>
-        </h1>
-        <div className="h-1.5 w-16 bg-brilliant-rose mt-2 rounded-full"></div>
-      </div>
+export const useChatSession = (
+  thread: Thread,
+  onThreadUpdate: (t: Thread) => void,
+  clearContext: () => void,
+) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [inputText, setInputText] = useState("");
 
-      <div className="mb-10">
-        <StatusBadge isOnline={props.isOllamaOnline} label="Workstation" />
-      </div>
+  const send = async (text: string, options: ChatSessionOptions) => {
+    if (!text.trim() || isProcessing) return;
 
-      <div className="space-y-6">
-        <ControlCard title="Intelligence" description="Hardware Mapping">
-          <select
-            value={props.activeProviderId}
-            onChange={(e) => props.setActiveProviderId(e.target.value as any)}
-            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
-          >
-            <option value="ollama">OLLAMA</option>
-            <option value="openrouter">OPENROUTER</option>
-          </select>
+    // 1. Setup Provider
+    const provider: Provider = {
+      id: options.activeProviderId,
+      name: options.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
+      url:
+        options.activeProviderId === "ollama"
+          ? `${options.ollamaBaseUrl}/api/chat`
+          : "https://openrouter.ai/api/v1/chat/completions",
+      apiKey:
+        options.activeProviderId === "openrouter" ? options.openRouterKey : "",
+    };
 
-          {props.activeProviderId === "ollama" ? (
-            <select
-              value={props.selectedModel}
-              onChange={(e) => props.setSelectedModel(e.target.value)}
-              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
-              disabled={!props.isOllamaOnline}
-            >
-              {props.availableModels.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type="text"
-              value={props.selectedModel}
-              onChange={(e) => props.setSelectedModel(e.target.value)}
-              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow text-xs outline-none font-bold"
-              placeholder="Model ID"
-            />
-          )}
-        </ControlCard>
+    // 2. Build Injected Context
+    const systemOverride = `
+      ${options.isGenealogyMode ? "You are a genealogy expert. Cite sources." : "You are a helpful AI assistant."}
+      ${thread.brief ? `\n\nSITUATIONAL BRIEF (Previous Context): ${thread.brief}` : ""}
+    `.trim();
 
-        <ControlCard title="Coding Mode" description="Recursive Scan">
-          <button
-            onClick={props.handleScanCodebase}
-            className={`w-full py-4 rounded-[2rem] border-2 font-black transition-all text-xs tracking-widest ${
-              props.isCodingMode
-                ? "bg-brilliant-rose border-graphite text-white shadow-md"
-                : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
-            }`}
-          >
-            {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
-          </button>
-        </ControlCard>
+    const userMsg: Message = {
+      id: uuidv4(),
+      role: "user",
+      text,
+      timestamp: new Date(),
+    };
+    const updatedMessages = [...thread.messages, userMsg];
 
-        <ControlCard title="Vault" description="Obsidian knowledge">
-          <button
-            onClick={() =>
-              obsidianService
-                .pickVaultFolder()
-                .then((p) => p && props.setVaultPath(p))
-            }
-            className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[9px] truncate mb-2 italic"
-          >
-            {props.vaultPath || "MAP VAULT PATH..."}
-          </button>
-          <button
-            onClick={async () =>
-              props.setContextSnap(
-                await obsidianService.getRecentNotesContext(props.vaultPath),
-              )
-            }
-            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest"
-          >
-            SNAP CONTEXT
-          </button>
-        </ControlCard>
-      </div>
-    </aside>
-  );
+    setInputText("");
+    setIsProcessing(true);
+
+    try {
+      const aiResponse = await sendMessage(updatedMessages, {
+        provider,
+        model: options.selectedModel,
+        isGenealogyExpert: options.isGenealogyMode,
+        contextNotes: options.contextSnap,
+        systemOverride, // Pass the briefed context here
+      });
+
+      let finalThread: Thread = {
+        ...thread,
+        messages: [
+          ...updatedMessages,
+          {
+            id: uuidv4(),
+            role: "assistant",
+            text: aiResponse,
+            timestamp: new Date(),
+          },
+        ],
+        updatedAt: new Date(),
+      };
+
+      // 3. Auto-Title if it's a new conversation and not custom named
+      if (thread.messages.length === 0 && !thread.isCustomName) {
+        try {
+          const title = await generateThreadMetadata(
+            finalThread.messages,
+            {
+              provider,
+              model: options.selectedModel,
+              isGenealogyExpert: false,
+              contextNotes: "",
+            },
+            "title",
+          );
+          finalThread.summary = title;
+        } catch (e) {
+          finalThread.summary = text.substring(0, 30);
+        }
+      }
+
+      onThreadUpdate(finalThread);
+      clearContext();
+    } catch (err: any) {
+      setInputText(text);
+      alert(err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return { send, isProcessing, inputText, setInputText };
 };
 </file>
 
@@ -715,6 +551,114 @@ export const useHardwareCheck = (intervalMs: number = 5000) => {
   }, [baseUrl, intervalMs]);
 
   return { isOllamaOnline };
+};
+</file>
+
+<file path="src/hooks/useThreads.ts">
+// src/hooks/useThreads.ts
+import { useState, useEffect } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { Thread, Provider } from "../types";
+import { threadService } from "../services/threadService";
+import { generateThreadMetadata } from "../services/llmService";
+
+export const useThreads = (
+  currentProvider?: Provider,
+  currentModel?: string,
+) => {
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [currentThread, setCurrentThread] = useState<Thread>({
+    id: uuidv4(),
+    messages: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  useEffect(() => {
+    threadService.getAllThreads().then((saved) => {
+      setThreads(saved);
+      if (saved.length > 0) setCurrentThread(saved[0]);
+    });
+  }, []);
+
+  const saveCurrentThread = async (updatedThread: Thread) => {
+    setCurrentThread(updatedThread);
+    await threadService.saveThread(updatedThread);
+    const all = await threadService.getAllThreads();
+    setThreads(all);
+  };
+
+  const switchThread = async (id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (!target) return;
+    setCurrentThread(target);
+
+    // Background Briefing: Only if we have a model/provider and no brief yet
+    if (
+      target.messages.length >= 2 &&
+      !target.brief &&
+      currentProvider &&
+      currentModel &&
+      !isSummarizing
+    ) {
+      setIsSummarizing(true);
+      try {
+        const brief = await generateThreadMetadata(
+          target.messages,
+          {
+            provider: currentProvider,
+            model: currentModel,
+            isGenealogyExpert: false,
+            contextNotes: "",
+          },
+          "brief",
+        );
+        await saveCurrentThread({ ...target, brief, updatedAt: new Date() });
+      } catch (e) {
+        console.error("Briefing failed", e);
+      } finally {
+        setIsSummarizing(false);
+      }
+    }
+  };
+
+  const renameThread = async (id: string, name: string) => {
+    const updated = threads.map((t) =>
+      t.id === id ? { ...t, summary: name, isCustomName: true } : t,
+    );
+    setThreads(updated);
+    const target = updated.find((t) => t.id === id);
+    if (target) await threadService.saveThread(target);
+  };
+
+  return {
+    threads,
+    currentThread,
+    setCurrentThread: saveCurrentThread,
+    createNewThread: () =>
+      setCurrentThread({
+        id: uuidv4(),
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    switchThread,
+    deleteThread: async (id: string) => {
+      await threadService.deleteThread(id);
+      const filtered = threads.filter((t) => t.id !== id);
+      setThreads(filtered);
+      if (currentThread.id === id)
+        setCurrentThread({
+          id: uuidv4(),
+          messages: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+    },
+    renameThread,
+    isSummarizing,
+  };
 };
 </file>
 
@@ -805,85 +749,6 @@ export const projectService = {
     } catch (e) {
       return "[Error scanning directory]";
     }
-  },
-};
-</file>
-
-<file path="src/services/threadService.ts">
-import {
-  readDir,
-  readTextFile,
-  writeFile,
-  mkdir,
-  remove,
-  BaseDirectory,
-} from "@tauri-apps/plugin-fs";
-import { Thread } from "../types";
-
-const THREADS_DIR = "threads";
-
-export const threadService = {
-  async ensureDir() {
-    try {
-      await mkdir(THREADS_DIR, {
-        baseDir: BaseDirectory.AppLocalData,
-        recursive: true,
-      });
-    } catch (e) {
-      // Directory likely exists
-    }
-  },
-
-  async saveThread(thread: Thread): Promise<void> {
-    await this.ensureDir();
-    const fileName = `${THREADS_DIR}/${thread.id}.json`;
-    const content = JSON.stringify(thread, null, 2);
-    await writeFile(fileName, new TextEncoder().encode(content), {
-      baseDir: BaseDirectory.AppLocalData,
-    });
-  },
-
-  async getAllThreads(): Promise<Thread[]> {
-    await this.ensureDir();
-    try {
-      const entries = await readDir(THREADS_DIR, {
-        baseDir: BaseDirectory.AppLocalData,
-      });
-      const threads: Thread[] = [];
-
-      for (const entry of entries) {
-        if (entry.name.endsWith(".json")) {
-          const content = await readTextFile(`${THREADS_DIR}/${entry.name}`, {
-            baseDir: BaseDirectory.AppLocalData,
-          });
-          const parsed = JSON.parse(content);
-
-          // Hydrate dates for the thread and every message
-          const thread: Thread = {
-            ...parsed,
-            createdAt: new Date(parsed.createdAt),
-            updatedAt: new Date(parsed.updatedAt),
-            messages: parsed.messages.map((m: any) => ({
-              ...m,
-              timestamp: new Date(m.timestamp),
-            })),
-          };
-          threads.push(thread);
-        }
-      }
-      return threads.sort(
-        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
-      );
-    } catch (e) {
-      console.error("Failed to load threads", e);
-      return [];
-    }
-  },
-
-  async deleteThread(id: string): Promise<void> {
-    await remove(`${THREADS_DIR}/${id}.json`, {
-      baseDir: BaseDirectory.AppLocalData,
-    });
   },
 };
 </file>
@@ -985,100 +850,306 @@ export const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
 };
 </file>
 
-<file path="src/services/llmService.ts">
-import { fetch } from "@tauri-apps/plugin-http";
-import { Message, Provider } from "../types";
+<file path="src/components/sidebar/Sidebar.tsx">
+import React from "react";
+import { StatusBadge } from "../ui/StatusBadge";
+import { ControlCard } from "./ControlCard";
+import { obsidianService } from "../../services/obsidianService";
+import { Thread } from "../../types";
 
-export interface LLMOptions {
-  provider: Provider;
-  model: string;
-  isGenealogyExpert: boolean;
-  contextNotes: string;
+interface SidebarProps {
+  width: number;
+  isOllamaOnline: boolean;
+  activeProviderId: "ollama" | "openrouter";
+  setActiveProviderId: (id: "ollama" | "openrouter") => void;
+  selectedModel: string;
+  setSelectedModel: (m: string) => void;
+  availableModels: string[];
+  isCodingMode: boolean;
+  handleScanCodebase: () => void;
+  vaultPath: string;
+  setVaultPath: (p: string) => void;
+  setContextSnap: (s: string) => void;
+  isGenealogyMode: boolean;
+  setIsGenealogyMode: (b: boolean) => void;
+  threads: Thread[];
+  currentThreadId: string;
+  onSelectThread: (id: string) => void;
+  onNewChat: () => void;
+  onDeleteThread: (id: string) => void;
+  onRenameThread: (id: string, name: string) => void;
+  isSummarizing: boolean;
 }
 
-export const sendMessage = async (
-  messages: Message[],
-  options: LLMOptions,
-): Promise<string> => {
-  const { provider, model, isGenealogyExpert, contextNotes } = options;
+export const Sidebar: React.FC<SidebarProps> = (props) => {
+  return (
+    <aside
+      style={{ width: props.width }}
+      className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 sm:p-8 bg-white z-20 shadow-xl overflow-y-auto custom-scrollbar"
+    >
+      {/* HEADER SECTION */}
+      <div className="mb-8 flex justify-between items-start">
+        <div>
+          <h1 className="text-4xl sm:text-5xl font-black italic tracking-tighter text-graphite">
+            LYRA{" "}
+            <span className="text-brilliant-rose text-xl not-italic">V0.1</span>
+          </h1>
+          <div className="h-1.5 w-16 bg-brilliant-rose mt-2 rounded-full"></div>
+        </div>
+        <button
+          onClick={props.onNewChat}
+          className="bg-graphite text-white p-3 rounded-xl hover:bg-brilliant-rose transition-colors shadow-lg flex items-center justify-center w-10 h-10"
+          title="New Chat"
+        >
+          <span className="text-2xl font-bold">+</span>
+        </button>
+      </div>
 
-  // 1. Construct System Message
-  let systemContent = isGenealogyExpert
-    ? "You are a genealogy expert. Cite sources and note missing evidence."
-    : "You are a helpful AI assistant.";
+      {/* HARDWARE STATUS */}
+      <div className="mb-10">
+        <StatusBadge isOnline={props.isOllamaOnline} label="Workstation" />
+      </div>
 
-  if (contextNotes) {
-    systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
-  }
+      <div className="space-y-6 flex-grow">
+        {/* THREAD HISTORY SECTION */}
+        <ControlCard
+          title="Archives"
+          description={
+            props.isSummarizing ? "Auditing History..." : "Recent Transmissions"
+          }
+        >
+          <div className="max-h-64 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+            {props.threads.length === 0 && (
+              <p className="text-[10px] opacity-30 italic p-2">
+                Empty silence...
+              </p>
+            )}
+            {props.threads.map((t) => (
+              <div
+                key={t.id}
+                onClick={() => props.onSelectThread(t.id)}
+                className={`group p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                  props.currentThreadId === t.id
+                    ? "border-brilliant-rose bg-brilliant-rose/5"
+                    : "border-transparent bg-bright-snow hover:border-saffron/30"
+                }`}
+              >
+                <input
+                  className="bg-transparent font-black text-[10px] uppercase w-full outline-none focus:text-brilliant-rose cursor-text truncate"
+                  value={t.summary || "New Transmission"}
+                  onChange={(e) => props.onRenameThread(t.id, e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="flex justify-between items-center mt-1">
+                  <span className="text-[8px] opacity-40">
+                    {new Date(t.updatedAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}{" "}
+                    — {new Date(t.updatedAt).toLocaleDateString()}
+                  </span>
+                  <div className="flex items-center space-x-2">
+                    {t.brief && (
+                      <span className="text-[8px] text-saffron font-bold animate-pulse">
+                        ● BRIEFED
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        props.onDeleteThread(t.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-brilliant-rose text-[10px] font-bold hover:scale-125 transition-all"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </ControlCard>
 
-  // 2. Map messages to API format
-  const apiMessages = [
-    { role: "system", content: systemContent },
-    ...messages.map((m) => ({
-      role: m.role,
-      content: m.text,
-    })),
-  ];
+        {/* INTELLIGENCE MAPPING */}
+        <ControlCard title="Intelligence" description="Hardware Mapping">
+          <select
+            value={props.activeProviderId}
+            onChange={(e) => props.setActiveProviderId(e.target.value as any)}
+            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
+          >
+            <option value="ollama">OLLAMA</option>
+            <option value="openrouter">OPENROUTER</option>
+          </select>
 
-  const isOllama = provider.url.includes("11434") || provider.id === "ollama";
+          {props.activeProviderId === "ollama" ? (
+            <select
+              value={props.selectedModel}
+              onChange={(e) => props.setSelectedModel(e.target.value)}
+              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
+              disabled={!props.isOllamaOnline}
+            >
+              {props.availableModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={props.selectedModel}
+              onChange={(e) => props.setSelectedModel(e.target.value)}
+              className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow text-xs outline-none font-bold"
+              placeholder="Model ID"
+            />
+          )}
+        </ControlCard>
 
-  const body = JSON.stringify({
-    model: model,
-    messages: apiMessages,
-    stream: false,
-  });
+        {/* CODING MODE RECURSIVE SCAN */}
+        <ControlCard title="Coding Mode" description="Recursive Scan">
+          <button
+            onClick={props.handleScanCodebase}
+            className={`w-full py-4 rounded-[2rem] border-2 font-black transition-all text-xs tracking-widest ${
+              props.isCodingMode
+                ? "bg-brilliant-rose border-graphite text-white shadow-md"
+                : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
+            }`}
+          >
+            {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
+          </button>
+        </ControlCard>
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  if (provider.apiKey) {
-    headers["Authorization"] = `Bearer ${provider.apiKey}`;
-  }
-
-  try {
-    // Use Tauri's fetch to bypass CORS and use native networking
-    const response = await fetch(provider.url, {
-      method: "POST",
-      headers,
-      body,
-    });
-
-    if (!response.ok) {
-      const errorData = (await response.json().catch(() => ({}))) as any;
-      throw new Error(
-        errorData.error?.message || `API Error: ${response.status}`,
-      );
-    }
-
-    const data = (await response.json()) as any;
-
-    if (isOllama) {
-      return data.message.content;
-    } else {
-      return data.choices[0].message.content;
-    }
-  } catch (error) {
-    console.error("LLM Service Error:", error);
-    throw error;
-  }
+        {/* OBSIDIAN VAULT CONTEXT */}
+        <ControlCard title="Vault" description="Obsidian knowledge">
+          <button
+            onClick={() =>
+              obsidianService
+                .pickVaultFolder()
+                .then((p) => p && props.setVaultPath(p))
+            }
+            className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[9px] truncate mb-2 italic"
+          >
+            {props.vaultPath || "MAP VAULT PATH..."}
+          </button>
+          <button
+            onClick={async () =>
+              props.setContextSnap(
+                await obsidianService.getRecentNotesContext(props.vaultPath),
+              )
+            }
+            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest shadow-md active:scale-95"
+          >
+            SNAP CONTEXT
+          </button>
+        </ControlCard>
+      </div>
+    </aside>
+  );
 };
+</file>
 
-export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
-  try {
-    const response = await fetch(`${baseUrl}/api/tags`, {
-      method: "GET",
+<file path="src/services/threadService.ts">
+import {
+  readDir,
+  readTextFile,
+  writeFile,
+  mkdir,
+  remove,
+  BaseDirectory,
+  exists,
+} from "@tauri-apps/plugin-fs";
+import { appLocalDataDir, join } from "@tauri-apps/api/path"; // Add these
+import { Thread } from "../types";
+
+const THREADS_DIR = "threads";
+
+export const threadService = {
+  async getThreadsPath() {
+    // This helps us see where the app is trying to save files
+    const base = await appLocalDataDir();
+    return await join(base, THREADS_DIR);
+  },
+
+  async ensureDir() {
+    try {
+      const dirExists = await exists(THREADS_DIR, {
+        baseDir: BaseDirectory.AppLocalData,
+      });
+      if (!dirExists) {
+        // Create the threads folder.
+        // recursive: true handles creating the parent (com.lyra.app) folder too.
+        await mkdir(THREADS_DIR, {
+          baseDir: BaseDirectory.AppLocalData,
+          recursive: true,
+        });
+        console.log("SUCCESS: Created threads directory");
+      }
+    } catch (e) {
+      console.error("FS Error (ensureDir):", e);
+      throw e; // Don't swallow this during debugging
+    }
+  },
+
+  async saveThread(thread: Thread): Promise<void> {
+    try {
+      await this.ensureDir();
+      const fileName = `${THREADS_DIR}/${thread.id}.json`;
+      const content = JSON.stringify(thread, null, 2);
+
+      await writeFile(fileName, new TextEncoder().encode(content), {
+        baseDir: BaseDirectory.AppLocalData,
+      });
+
+      // Get the full path just for the console log so you can go find it!
+      const fullPath = await this.getThreadsPath();
+      console.log(`FILE SAVED AT: ${fullPath}/${thread.id}.json`);
+    } catch (e) {
+      console.error("CRITICAL SAVE ERROR:", e);
+    }
+  },
+
+  async getAllThreads(): Promise<Thread[]> {
+    await this.ensureDir();
+    try {
+      const entries = await readDir(THREADS_DIR, {
+        baseDir: BaseDirectory.AppLocalData,
+      });
+      const threads: Thread[] = [];
+
+      for (const entry of entries) {
+        if (entry.name.endsWith(".json")) {
+          const content = await readTextFile(`${THREADS_DIR}/${entry.name}`, {
+            baseDir: BaseDirectory.AppLocalData,
+          });
+          const parsed = JSON.parse(content);
+
+          // Hydrate dates for the thread and every message
+          const thread: Thread = {
+            ...parsed,
+            createdAt: new Date(parsed.createdAt),
+            updatedAt: new Date(parsed.updatedAt),
+            messages: parsed.messages.map((m: any) => ({
+              ...m,
+              timestamp: new Date(m.timestamp),
+            })),
+          };
+          threads.push(thread);
+        }
+      }
+      return threads.sort(
+        (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+      );
+    } catch (e) {
+      console.error("Failed to load threads", e);
+      return [];
+    }
+  },
+
+  async deleteThread(id: string): Promise<void> {
+    await remove(`${THREADS_DIR}/${id}.json`, {
+      baseDir: BaseDirectory.AppLocalData,
     });
-
-    if (!response.ok) return [];
-
-    const data = (await response.json()) as { models: { name: string }[] };
-    // Extract just the names (e.g., "llama3.2:latest")
-    return data.models.map((m) => m.name);
-  } catch (error) {
-    console.error("Failed to fetch Ollama models:", error);
-    return [];
-  }
+  },
 };
 </file>
 
@@ -1110,32 +1181,6 @@ export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
 }
 </file>
 
-<file path="src/types/index.ts">
-interface Message {
-  id: string;
-  text: string;
-  role: string;
-  timestamp: Date;
-}
-
-interface Provider{
-    id: string;
-    name: string;
-    url: string;
-    apiKey: string
-}
-
-interface Thread {
-  id: string;
-  messages: Message[];
-  summary?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export type { Message, Provider, Thread };
-</file>
-
 <file path="src/main.tsx">
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -1149,6 +1194,178 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 );
 </file>
 
+<file path="README.md">
+# Tauri + React + Typescript
+
+This template should help get you started developing with Tauri, React and Typescript in Vite.
+
+## Recommended IDE Setup
+
+- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+</file>
+
+<file path="src/services/llmService.ts">
+// src/services/llmService.ts
+import { fetch } from "@tauri-apps/plugin-http";
+import { Message, Provider } from "../types";
+
+export interface LLMOptions {
+  provider: Provider;
+  model: string;
+  isGenealogyExpert: boolean;
+  contextNotes: string;
+  systemOverride?: string; // Add this to allow custom context injection
+}
+
+export const sendMessage = async (
+  messages: Message[],
+  options: LLMOptions,
+): Promise<string> => {
+  const { provider, model, isGenealogyExpert, contextNotes, systemOverride } =
+    options;
+
+  // Use override if provided (for the Briefing system), otherwise use default logic
+  let systemContent =
+    systemOverride ||
+    (isGenealogyExpert
+      ? "You are a genealogy expert. Cite sources and note missing evidence."
+      : "You are a helpful AI assistant.");
+
+  if (contextNotes && !systemOverride) {
+    systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
+  }
+
+  const apiMessages = [
+    { role: "system", content: systemContent },
+    ...messages.map((m) => ({ role: m.role, content: m.text })),
+  ];
+
+  const response = await fetch(provider.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
+    },
+    body: JSON.stringify({ model, messages: apiMessages, stream: false }),
+  });
+
+  const data = (await response.json()) as any;
+  return provider.id === "ollama"
+    ? data.message.content
+    : data.choices[0].message.content;
+};
+
+export const generateThreadMetadata = async (
+  messages: Message[],
+  options: LLMOptions,
+  mode: "title" | "brief",
+): Promise<string> => {
+  const { provider, model } = options;
+
+  // 1. STACKED INSTRUCTION: Use System role for strict formatting
+  const systemInstruction =
+    mode === "title"
+      ? "You are a specialized metadata utility. Your ONLY task is to provide a 3-5 word succinct title for the provided conversation. Do NOT use markdown. Do NOT use quotes. Do NOT explain your choice. Do NOT use conversational filler. Response must be plain text."
+      : "Summarize the key facts and goals of this chat into a 2-paragraph Situational Brief. Focus on facts, not conversational fluff.";
+
+  // We only send the last few messages to save tokens and focus the model on the current topic
+  const contextSnippet = messages
+    .slice(-4)
+    .map((m) => `${m.role.toUpperCase()}: ${m.text}`)
+    .join("\n");
+
+  const userPrompt =
+    mode === "title"
+      ? `Based on this exchange, what is the succinct topic?\n\n${contextSnippet}`
+      : `Generate a brief for this exchange:\n\n${contextSnippet}`;
+
+  const apiMessages = [
+    { role: "system", content: systemInstruction },
+    { role: "user", content: userPrompt },
+  ];
+
+  try {
+    const response = await fetch(provider.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
+      },
+      body: JSON.stringify({ model, messages: apiMessages, stream: false }),
+    });
+
+    const data = (await response.json()) as any;
+    let rawContent =
+      provider.id === "ollama"
+        ? data.message.content
+        : data.choices[0].message.content;
+
+    // 2. AGGRESSIVE CLEANING
+    let cleaned =
+      rawContent
+        .replace(/<think>[\s\S]*?<\/think>/gi, "") // Remove reasoning tags
+        .split("\n") // Split by lines
+        .map((line: string) => line.trim()) // Trim each line
+        .filter((line: string) => line.length > 0) // Remove empty lines
+        .shift() || ""; // Take only the FIRST meaningful line
+
+    // 3. NOISE REDUCTION: Remove common model filler prefixes
+    cleaned = cleaned
+      .replace(/^(the title is|here is a title|topic|subject)[:\s]*/gi, "")
+      .replace(/["'#*]/g, "") // Remove quotes, hashes, and asterisks
+      .trim();
+
+    // Final check for length and quality
+    if (mode === "title" && (cleaned.length < 2 || cleaned.length > 60)) {
+      return messages[0]?.text.substring(0, 25) + "...";
+    }
+
+    return cleaned;
+  } catch (error) {
+    console.error("Metadata generation failed:", error);
+    return messages[0]?.text.substring(0, 25) + "...";
+  }
+};
+
+export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
+  try {
+    const response = await fetch(`${baseUrl}/api/tags`);
+    if (!response.ok) return [];
+    const data = (await response.json()) as { models: { name: string }[] };
+    return data.models.map((m) => m.name);
+  } catch {
+    return [];
+  }
+};
+</file>
+
+<file path="src/types/index.ts">
+// src/types/index.ts
+export interface Message {
+  id: string;
+  text: string;
+  role: "user" | "assistant" | "system";
+  timestamp: Date;
+}
+
+export interface Provider {
+  id: string;
+  name: string;
+  url: string;
+  apiKey: string;
+}
+
+export interface Thread {
+  id: string;
+  messages: Message[];
+  summary?: string; // The human-readable title
+  brief?: string; // The background situational summary
+  isCustomName?: boolean; // Prevents AI from overwriting a manual rename
+  createdAt: Date;
+  updatedAt: Date;
+}
+</file>
+
 <file path="src-tauri/capabilities/desktop.json">
 {
   "$schema": "../gen/schemas/desktop-schema.json",
@@ -1158,6 +1375,13 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   "permissions": [
     "core:path:allow-join",
     "dialog:allow-open",
+    "fs:default",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$APPLOCALDATA/**" }]
+    },
     "fs:allow-read-dir",
     "fs:allow-read-file",
     "fs:allow-write-file",
@@ -1186,16 +1410,6 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     }
   ]
 }
-</file>
-
-<file path="README.md">
-# Tauri + React + Typescript
-
-This template should help get you started developing with Tauri, React and Typescript in Vite.
-
-## Recommended IDE Setup
-
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
 </file>
 
 <file path="src-tauri/src/lib.rs">
@@ -1451,9 +1665,18 @@ const App = () => {
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
   const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
 
-  // 2. Logic Hooks
+  // 2. Logic Hooks - ORDER MATTERS HERE
   const { isOllamaOnline } = useHardwareCheck();
   const { width: sidebarWidth, startResizing } = useSidebarResize(320);
+
+  // DECLARE MODELS FIRST
+  const models = useModelManager(isOllamaOnline, OLLAMA_URL);
+
+  // DECLARE VAULT AND STATE
+  const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
+  const [isGenealogyMode, setIsGenealogyMode] = React.useState(false);
+
+  // NOW PASS MODELS INTO USETHREADS
   const {
     threads,
     currentThread,
@@ -1461,12 +1684,22 @@ const App = () => {
     createNewThread,
     switchThread,
     deleteThread,
-  } = useThreads();
-  const [isGenealogyMode, setIsGenealogyMode] = React.useState(false);
+    renameThread,
+    isSummarizing,
+  } = useThreads(
+    {
+      id: models.activeProviderId,
+      name: models.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
+      url:
+        models.activeProviderId === "ollama"
+          ? `${OLLAMA_URL}/api/chat`
+          : "https://openrouter.ai/api/v1/chat/completions",
+      apiKey: models.activeProviderId === "openrouter" ? OPENROUTER_KEY : "",
+    },
+    models.selectedModel,
+  );
 
-  const models = useModelManager(isOllamaOnline, OLLAMA_URL);
-  const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
-
+  // FINALLY SETUP THE CHAT SESSION
   const { send, isProcessing, inputText, setInputText } = useChatSession(
     currentThread,
     setCurrentThread,
@@ -1506,6 +1739,8 @@ const App = () => {
         onSelectThread={switchThread}
         onNewChat={createNewThread}
         onDeleteThread={deleteThread}
+        onRenameThread={renameThread}
+        isSummarizing={isSummarizing}
       />
 
       <div
