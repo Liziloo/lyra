@@ -400,118 +400,6 @@ export const ControlCard: React.FC<ControlCardProps> = ({
 };
 </file>
 
-<file path="src/hooks/useChatSession.ts">
-// src/hooks/useChatSession.ts
-import { useState } from "react";
-import { v4 as uuidv4 } from "uuid";
-import { sendMessage, generateThreadMetadata } from "../services/llmService";
-import { Thread, Message, Provider } from "../types";
-
-interface ChatSessionOptions {
-  activeProviderId: "ollama" | "openrouter";
-  selectedModel: string;
-  isGenealogyMode: boolean;
-  contextSnap: string;
-  openRouterKey: string;
-  ollamaBaseUrl: string;
-}
-
-export const useChatSession = (
-  thread: Thread,
-  onThreadUpdate: (t: Thread) => void,
-  clearContext: () => void,
-) => {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [inputText, setInputText] = useState("");
-
-  const send = async (text: string, options: ChatSessionOptions) => {
-    if (!text.trim() || isProcessing) return;
-
-    // 1. Setup Provider
-    const provider: Provider = {
-      id: options.activeProviderId,
-      name: options.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
-      url:
-        options.activeProviderId === "ollama"
-          ? `${options.ollamaBaseUrl}/api/chat`
-          : "https://openrouter.ai/api/v1/chat/completions",
-      apiKey:
-        options.activeProviderId === "openrouter" ? options.openRouterKey : "",
-    };
-
-    // 2. Build Injected Context
-    const systemOverride = `
-      ${options.isGenealogyMode ? "You are a genealogy expert. Cite sources." : "You are a helpful AI assistant."}
-      ${thread.brief ? `\n\nSITUATIONAL BRIEF (Previous Context): ${thread.brief}` : ""}
-    `.trim();
-
-    const userMsg: Message = {
-      id: uuidv4(),
-      role: "user",
-      text,
-      timestamp: new Date(),
-    };
-    const updatedMessages = [...thread.messages, userMsg];
-
-    setInputText("");
-    setIsProcessing(true);
-
-    try {
-      const aiResponse = await sendMessage(updatedMessages, {
-        provider,
-        model: options.selectedModel,
-        isGenealogyExpert: options.isGenealogyMode,
-        contextNotes: options.contextSnap,
-        systemOverride, // Pass the briefed context here
-      });
-
-      let finalThread: Thread = {
-        ...thread,
-        messages: [
-          ...updatedMessages,
-          {
-            id: uuidv4(),
-            role: "assistant",
-            text: aiResponse,
-            timestamp: new Date(),
-          },
-        ],
-        updatedAt: new Date(),
-      };
-
-      // 3. Auto-Title if it's a new conversation and not custom named
-      if (thread.messages.length === 0 && !thread.isCustomName) {
-        try {
-          const title = await generateThreadMetadata(
-            finalThread.messages,
-            {
-              provider,
-              model: options.selectedModel,
-              isGenealogyExpert: false,
-              contextNotes: "",
-            },
-            "title",
-          );
-          finalThread.summary = title;
-        } catch (e) {
-          finalThread.summary = text.substring(0, 30);
-        }
-      }
-
-      onThreadUpdate(finalThread);
-      clearContext();
-    } catch (err: any) {
-      setInputText(text);
-      alert(err.message);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  return { send, isProcessing, inputText, setInputText };
-};
-</file>
-
 <file path="src/hooks/useHardwareCheck.ts">
 import { useState, useEffect } from "react";
 import { fetch } from "@tauri-apps/plugin-http";
@@ -551,114 +439,6 @@ export const useHardwareCheck = (intervalMs: number = 5000) => {
   }, [baseUrl, intervalMs]);
 
   return { isOllamaOnline };
-};
-</file>
-
-<file path="src/hooks/useThreads.ts">
-// src/hooks/useThreads.ts
-import { useState, useEffect } from "react";
-import { v4 as uuidv4 } from "uuid";
-import { Thread, Provider } from "../types";
-import { threadService } from "../services/threadService";
-import { generateThreadMetadata } from "../services/llmService";
-
-export const useThreads = (
-  currentProvider?: Provider,
-  currentModel?: string,
-) => {
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [isSummarizing, setIsSummarizing] = useState(false);
-  const [currentThread, setCurrentThread] = useState<Thread>({
-    id: uuidv4(),
-    messages: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
-  useEffect(() => {
-    threadService.getAllThreads().then((saved) => {
-      setThreads(saved);
-      if (saved.length > 0) setCurrentThread(saved[0]);
-    });
-  }, []);
-
-  const saveCurrentThread = async (updatedThread: Thread) => {
-    setCurrentThread(updatedThread);
-    await threadService.saveThread(updatedThread);
-    const all = await threadService.getAllThreads();
-    setThreads(all);
-  };
-
-  const switchThread = async (id: string) => {
-    const target = threads.find((t) => t.id === id);
-    if (!target) return;
-    setCurrentThread(target);
-
-    // Background Briefing: Only if we have a model/provider and no brief yet
-    if (
-      target.messages.length >= 2 &&
-      !target.brief &&
-      currentProvider &&
-      currentModel &&
-      !isSummarizing
-    ) {
-      setIsSummarizing(true);
-      try {
-        const brief = await generateThreadMetadata(
-          target.messages,
-          {
-            provider: currentProvider,
-            model: currentModel,
-            isGenealogyExpert: false,
-            contextNotes: "",
-          },
-          "brief",
-        );
-        await saveCurrentThread({ ...target, brief, updatedAt: new Date() });
-      } catch (e) {
-        console.error("Briefing failed", e);
-      } finally {
-        setIsSummarizing(false);
-      }
-    }
-  };
-
-  const renameThread = async (id: string, name: string) => {
-    const updated = threads.map((t) =>
-      t.id === id ? { ...t, summary: name, isCustomName: true } : t,
-    );
-    setThreads(updated);
-    const target = updated.find((t) => t.id === id);
-    if (target) await threadService.saveThread(target);
-  };
-
-  return {
-    threads,
-    currentThread,
-    setCurrentThread: saveCurrentThread,
-    createNewThread: () =>
-      setCurrentThread({
-        id: uuidv4(),
-        messages: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
-    switchThread,
-    deleteThread: async (id: string) => {
-      await threadService.deleteThread(id);
-      const filtered = threads.filter((t) => t.id !== id);
-      setThreads(filtered);
-      if (currentThread.id === id)
-        setCurrentThread({
-          id: uuidv4(),
-          messages: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-    },
-    renameThread,
-    isSummarizing,
-  };
 };
 </file>
 
@@ -1048,6 +828,226 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
 };
 </file>
 
+<file path="src/hooks/useChatSession.ts">
+// src/hooks/useChatSession.ts
+import { useState } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { sendMessage, generateThreadMetadata } from "../services/llmService";
+import { Thread, Message, Provider } from "../types";
+
+interface ChatSessionOptions {
+  activeProviderId: "ollama" | "openrouter";
+  selectedModel: string;
+  isGenealogyMode: boolean;
+  contextSnap: string;
+  openRouterKey: string;
+  ollamaBaseUrl: string;
+}
+
+export const useChatSession = (
+  thread: Thread,
+  onThreadUpdate: (t: Thread) => void,
+  clearContext: () => void,
+  metadataModel: string,
+) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [inputText, setInputText] = useState("");
+
+  const send = async (text: string, options: ChatSessionOptions) => {
+    if (!text.trim() || isProcessing) return;
+
+    // 1. Setup Provider
+    const provider: Provider = {
+      id: options.activeProviderId,
+      name: options.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
+      url:
+        options.activeProviderId === "ollama"
+          ? `${options.ollamaBaseUrl}/api/chat`
+          : "https://openrouter.ai/api/v1/chat/completions",
+      apiKey:
+        options.activeProviderId === "openrouter" ? options.openRouterKey : "",
+    };
+
+    // 2. Build Injected Context
+    const systemOverride = `
+      ${options.isGenealogyMode ? "You are a genealogy expert. Cite sources." : "You are a helpful AI assistant."}
+      ${thread.brief ? `\n\nSITUATIONAL BRIEF (Previous Context): ${thread.brief}` : ""}
+    `.trim();
+
+    const userMsg: Message = {
+      id: uuidv4(),
+      role: "user",
+      text,
+      timestamp: new Date(),
+    };
+    const updatedMessages = [...thread.messages, userMsg];
+
+    setInputText("");
+    setIsProcessing(true);
+
+    try {
+      const aiResponse = await sendMessage(updatedMessages, {
+        provider,
+        model: options.selectedModel,
+        isGenealogyExpert: options.isGenealogyMode,
+        contextNotes: options.contextSnap,
+        systemOverride, // Pass the briefed context here
+      });
+
+      let finalThread: Thread = {
+        ...thread,
+        messages: [
+          ...updatedMessages,
+          {
+            id: uuidv4(),
+            role: "assistant",
+            text: aiResponse,
+            timestamp: new Date(),
+          },
+        ],
+        updatedAt: new Date(),
+      };
+
+      if (thread.messages.length === 0 && !thread.isCustomName) {
+        try {
+          const title = await generateThreadMetadata(
+            finalThread.messages,
+            {
+              provider,
+              model: metadataModel, // FORCE UTILITY MODEL
+              isGenealogyExpert: false,
+              contextNotes: "",
+            },
+            "title",
+          );
+          finalThread.summary = title;
+        } catch (e) {
+          finalThread.summary = text.substring(0, 30);
+        }
+      }
+
+      onThreadUpdate(finalThread);
+      clearContext();
+    } catch (err: any) {
+      setInputText(text);
+      alert(err.message);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return { send, isProcessing, inputText, setInputText };
+};
+</file>
+
+<file path="src/hooks/useThreads.ts">
+// src/hooks/useThreads.ts
+import { useState, useEffect } from "react";
+import { v4 as uuidv4 } from "uuid";
+import { Thread, Provider } from "../types";
+import { threadService } from "../services/threadService";
+import { generateThreadMetadata } from "../services/llmService";
+
+export const useThreads = (
+  currentProvider?: Provider,
+  metadataModel?: string,
+) => {
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [currentThread, setCurrentThread] = useState<Thread>({
+    id: uuidv4(),
+    messages: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  useEffect(() => {
+    threadService.getAllThreads().then((saved) => {
+      setThreads(saved);
+      if (saved.length > 0) setCurrentThread(saved[0]);
+    });
+  }, []);
+
+  const saveCurrentThread = async (updatedThread: Thread) => {
+    setCurrentThread(updatedThread);
+    await threadService.saveThread(updatedThread);
+    const all = await threadService.getAllThreads();
+    setThreads(all);
+  };
+
+  const switchThread = async (id: string) => {
+    const target = threads.find((t) => t.id === id);
+    if (!target) return;
+    setCurrentThread(target);
+
+    // Background Briefing: Use the metadataModel
+    if (
+      target.messages.length >= 2 &&
+      !target.brief &&
+      currentProvider &&
+      metadataModel &&
+      !isSummarizing
+    ) {
+      setIsSummarizing(true);
+      try {
+        const brief = await generateThreadMetadata(
+          target.messages,
+          {
+            provider: currentProvider,
+            model: metadataModel, // FORCE UTILITY MODEL
+            isGenealogyExpert: false,
+            contextNotes: "",
+          },
+          "brief",
+        );
+        await saveCurrentThread({ ...target, brief, updatedAt: new Date() });
+      } catch (e) {
+        console.error("Briefing failed", e);
+      } finally {
+        setIsSummarizing(false);
+      }
+    }
+  };
+
+  const renameThread = async (id: string, name: string) => {
+    const updated = threads.map((t) =>
+      t.id === id ? { ...t, summary: name, isCustomName: true } : t,
+    );
+    setThreads(updated);
+    const target = updated.find((t) => t.id === id);
+    if (target) await threadService.saveThread(target);
+  };
+
+  return {
+    threads,
+    currentThread,
+    setCurrentThread: saveCurrentThread,
+    createNewThread: () =>
+      setCurrentThread({
+        id: uuidv4(),
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    switchThread,
+    deleteThread: async (id: string) => {
+      await threadService.deleteThread(id);
+      const filtered = threads.filter((t) => t.id !== id);
+      setThreads(filtered);
+      if (currentThread.id === id)
+        setCurrentThread({
+          id: uuidv4(),
+          messages: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+    },
+    renameThread,
+    isSummarizing,
+  };
+};
+</file>
+
 <file path="src/services/threadService.ts">
 import {
   readDir,
@@ -1202,141 +1202,6 @@ This template should help get you started developing with Tauri, React and Types
 ## Recommended IDE Setup
 
 - [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-</file>
-
-<file path="src/services/llmService.ts">
-// src/services/llmService.ts
-import { fetch } from "@tauri-apps/plugin-http";
-import { Message, Provider } from "../types";
-
-export interface LLMOptions {
-  provider: Provider;
-  model: string;
-  isGenealogyExpert: boolean;
-  contextNotes: string;
-  systemOverride?: string; // Add this to allow custom context injection
-}
-
-export const sendMessage = async (
-  messages: Message[],
-  options: LLMOptions,
-): Promise<string> => {
-  const { provider, model, isGenealogyExpert, contextNotes, systemOverride } =
-    options;
-
-  // Use override if provided (for the Briefing system), otherwise use default logic
-  let systemContent =
-    systemOverride ||
-    (isGenealogyExpert
-      ? "You are a genealogy expert. Cite sources and note missing evidence."
-      : "You are a helpful AI assistant.");
-
-  if (contextNotes && !systemOverride) {
-    systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
-  }
-
-  const apiMessages = [
-    { role: "system", content: systemContent },
-    ...messages.map((m) => ({ role: m.role, content: m.text })),
-  ];
-
-  const response = await fetch(provider.url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
-    },
-    body: JSON.stringify({ model, messages: apiMessages, stream: false }),
-  });
-
-  const data = (await response.json()) as any;
-  return provider.id === "ollama"
-    ? data.message.content
-    : data.choices[0].message.content;
-};
-
-export const generateThreadMetadata = async (
-  messages: Message[],
-  options: LLMOptions,
-  mode: "title" | "brief",
-): Promise<string> => {
-  const { provider, model } = options;
-
-  // 1. STACKED INSTRUCTION: Use System role for strict formatting
-  const systemInstruction =
-    mode === "title"
-      ? "You are a specialized metadata utility. Your ONLY task is to provide a 3-5 word succinct title for the provided conversation. Do NOT use markdown. Do NOT use quotes. Do NOT explain your choice. Do NOT use conversational filler. Response must be plain text."
-      : "Summarize the key facts and goals of this chat into a 2-paragraph Situational Brief. Focus on facts, not conversational fluff.";
-
-  // We only send the last few messages to save tokens and focus the model on the current topic
-  const contextSnippet = messages
-    .slice(-4)
-    .map((m) => `${m.role.toUpperCase()}: ${m.text}`)
-    .join("\n");
-
-  const userPrompt =
-    mode === "title"
-      ? `Based on this exchange, what is the succinct topic?\n\n${contextSnippet}`
-      : `Generate a brief for this exchange:\n\n${contextSnippet}`;
-
-  const apiMessages = [
-    { role: "system", content: systemInstruction },
-    { role: "user", content: userPrompt },
-  ];
-
-  try {
-    const response = await fetch(provider.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
-      },
-      body: JSON.stringify({ model, messages: apiMessages, stream: false }),
-    });
-
-    const data = (await response.json()) as any;
-    let rawContent =
-      provider.id === "ollama"
-        ? data.message.content
-        : data.choices[0].message.content;
-
-    // 2. AGGRESSIVE CLEANING
-    let cleaned =
-      rawContent
-        .replace(/<think>[\s\S]*?<\/think>/gi, "") // Remove reasoning tags
-        .split("\n") // Split by lines
-        .map((line: string) => line.trim()) // Trim each line
-        .filter((line: string) => line.length > 0) // Remove empty lines
-        .shift() || ""; // Take only the FIRST meaningful line
-
-    // 3. NOISE REDUCTION: Remove common model filler prefixes
-    cleaned = cleaned
-      .replace(/^(the title is|here is a title|topic|subject)[:\s]*/gi, "")
-      .replace(/["'#*]/g, "") // Remove quotes, hashes, and asterisks
-      .trim();
-
-    // Final check for length and quality
-    if (mode === "title" && (cleaned.length < 2 || cleaned.length > 60)) {
-      return messages[0]?.text.substring(0, 25) + "...";
-    }
-
-    return cleaned;
-  } catch (error) {
-    console.error("Metadata generation failed:", error);
-    return messages[0]?.text.substring(0, 25) + "...";
-  }
-};
-
-export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
-  try {
-    const response = await fetch(`${baseUrl}/api/tags`);
-    if (!response.ok) return [];
-    const data = (await response.json()) as { models: { name: string }[] };
-    return data.models.map((m) => m.name);
-  } catch {
-    return [];
-  }
-};
 </file>
 
 <file path="src/types/index.ts">
@@ -1548,6 +1413,139 @@ dist-ssr
 .env
 </file>
 
+<file path="src/services/llmService.ts">
+// src/services/llmService.ts
+import { fetch } from "@tauri-apps/plugin-http";
+import { Message, Provider } from "../types";
+
+export interface LLMOptions {
+  provider: Provider;
+  model: string;
+  isGenealogyExpert: boolean;
+  contextNotes: string;
+  systemOverride?: string; // Add this to allow custom context injection
+}
+
+export const sendMessage = async (
+  messages: Message[],
+  options: LLMOptions,
+): Promise<string> => {
+  const { provider, model, isGenealogyExpert, contextNotes, systemOverride } =
+    options;
+
+  // Use override if provided (for the Briefing system), otherwise use default logic
+  let systemContent =
+    systemOverride ||
+    (isGenealogyExpert
+      ? "You are a genealogy expert. Cite sources and note missing evidence."
+      : "You are a helpful AI assistant.");
+
+  if (contextNotes && !systemOverride) {
+    systemContent += `\n\nUse the following recent notes for context:\n${contextNotes}`;
+  }
+
+  const apiMessages = [
+    { role: "system", content: systemContent },
+    ...messages.map((m) => ({ role: m.role, content: m.text })),
+  ];
+
+  const response = await fetch(provider.url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
+    },
+    body: JSON.stringify({ model, messages: apiMessages, stream: false }),
+  });
+
+  const data = (await response.json()) as any;
+  return provider.id === "ollama"
+    ? data.message.content
+    : data.choices[0].message.content;
+};
+
+export const generateThreadMetadata = async (
+  messages: Message[],
+  options: LLMOptions,
+  mode: "title" | "brief",
+): Promise<string> => {
+  const { provider, model } = options;
+
+  const systemInstruction =
+    mode === "title"
+      ? "You are a metadata utility. Provide a 3-5 word plain text title. NO quotes, NO thinking, NO 'Title:', NO filler."
+      : "Provide a 2-paragraph Situational Brief for continuity. Focus on facts. NO thinking, NO filler.";
+
+  const contextSnippet = messages
+    .slice(-4)
+    .map((m) => `${m.role.toUpperCase()}: ${m.text}`)
+    .join("\n");
+
+  const userPrompt =
+    mode === "title"
+      ? `Topic for this conversation:\n\n${contextSnippet}`
+      : `Brief this exchange:\n\n${contextSnippet}`;
+
+  const apiMessages = [
+    { role: "system", content: systemInstruction },
+    { role: "user", content: userPrompt },
+  ];
+
+  try {
+    const response = await fetch(provider.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(provider.apiKey && { Authorization: `Bearer ${provider.apiKey}` }),
+      },
+      body: JSON.stringify({ model, messages: apiMessages, stream: false }),
+    });
+
+    const data = (await response.json()) as any;
+    let rawContent =
+      provider.id === "ollama"
+        ? data.message.content
+        : data.choices[0].message.content;
+
+    // AGGRESSIVE CLEANING
+    let cleaned =
+      rawContent
+        .replace(/<think>[\s\S]*?<\/think>/gi, "") // Remove reasoning
+        .split("\n")
+        .map((line: string) => line.trim())
+        .filter((line: string) => line.length > 0)
+        .shift() || ""; // Get first real line
+
+    cleaned = cleaned
+      .replace(/^(title|topic|subject|summary)[:\s]*/gi, "") // Remove common prefixes
+      .replace(/^\d+\.\s*/, "") // Remove "1. " numbering
+      .replace(/["'#*]/g, "") // Remove formatting chars
+      .trim();
+
+    // Ensure it's actually succinct for titles
+    if (mode === "title" && cleaned.length > 50) {
+      cleaned = cleaned.substring(0, 47) + "...";
+    }
+
+    return cleaned || (mode === "title" ? "New Transmission" : "");
+  } catch (error) {
+    console.error("Metadata generation failed:", error);
+    return mode === "title" ? "New Transmission" : "";
+  }
+};
+
+export const getOllamaModels = async (baseUrl: string): Promise<string[]> => {
+  try {
+    const response = await fetch(`${baseUrl}/api/tags`);
+    if (!response.ok) return [];
+    const data = (await response.json()) as { models: { name: string }[] };
+    return data.models.map((m) => m.name);
+  } catch {
+    return [];
+  }
+};
+</file>
+
 <file path="SPEC.md">
 # Prototype Spec: Project Lyra (v0.1 - The Core)
 
@@ -1665,6 +1663,10 @@ const App = () => {
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
   const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
 
+  // Define the specific model for background tasks
+  // llama3.2:1b is recommended as it's tiny, fast, and follows formatting well
+  const METADATA_MODEL = "llama3.2:1b";
+
   // 2. Logic Hooks - ORDER MATTERS HERE
   const { isOllamaOnline } = useHardwareCheck();
   const { width: sidebarWidth, startResizing } = useSidebarResize(320);
@@ -1696,7 +1698,7 @@ const App = () => {
           : "https://openrouter.ai/api/v1/chat/completions",
       apiKey: models.activeProviderId === "openrouter" ? OPENROUTER_KEY : "",
     },
-    models.selectedModel,
+    METADATA_MODEL,
   );
 
   // FINALLY SETUP THE CHAT SESSION
@@ -1707,6 +1709,7 @@ const App = () => {
       vault.setContextSnap("");
       vault.setIsCodingMode(false);
     },
+    METADATA_MODEL,
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);

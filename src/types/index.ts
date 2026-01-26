@@ -1,4 +1,5 @@
 // src/types/index.ts
+
 export interface Message {
   id: string;
   text: string;
@@ -16,9 +17,24 @@ export interface Provider {
 export interface Thread {
   id: string;
   messages: Message[];
-  summary?: string; // The human-readable title
-  brief?: string; // The background situational summary
-  isCustomName?: boolean; // Prevents AI from overwriting a manual rename
+  summary?: string;
+  brief?: string;
+  isCustomName?: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface LLMOptions {
+  provider: Provider;
+  model: string;
+  contextNotes: string;
+  systemOverride?: string;
+}
+
+export interface ChatSessionOptions {
+  activeProviderId: "ollama" | "openrouter";
+  selectedModel: string;
+  contextSnap: string;
+  openRouterKey: string;
+  ollamaBaseUrl: string;
 }

@@ -52,7 +52,6 @@ export const useThreads = (
           {
             provider: currentProvider,
             model: metadataModel, // FORCE UTILITY MODEL
-            isGenealogyExpert: false,
             contextNotes: "",
           },
           "brief",

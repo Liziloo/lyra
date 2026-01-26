@@ -1,4 +1,6 @@
-import React, { useRef, useEffect } from "react";
+// src/App.tsx
+
+import { useRef, useEffect } from "react";
 import { useHardwareCheck } from "./hooks/useHardwareCheck";
 import { useSidebarResize } from "./hooks/useSidebarResize";
 import { useModelManager } from "./hooks/useModelManager";
@@ -6,33 +8,22 @@ import { useVaultContext } from "./hooks/useVaultContext";
 import { useThreads } from "./hooks/useThreads";
 import { useChatSession } from "./hooks/useChatSession";
 
-// Components
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { MessageBubble } from "./components/chat/MessageBubble";
 import { ChatDivider } from "./components/chat/ChatDivider";
+import { ChatInput } from "./components/chat/ChatInput";
 
 const App = () => {
-  // 1. Config Constants
   const OLLAMA_URL =
     import.meta.env.VITE_OLLAMA_URL || "http://localhost:11434";
   const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || "";
-
-  // Define the specific model for background tasks
-  // llama3.2:1b is recommended as it's tiny, fast, and follows formatting well
   const METADATA_MODEL = "llama3.2:1b";
 
-  // 2. Logic Hooks - ORDER MATTERS HERE
   const { isOllamaOnline } = useHardwareCheck();
   const { width: sidebarWidth, startResizing } = useSidebarResize(320);
-
-  // DECLARE MODELS FIRST
   const models = useModelManager(isOllamaOnline, OLLAMA_URL);
-
-  // DECLARE VAULT AND STATE
   const vault = useVaultContext(import.meta.env.VITE_OBSIDIAN_PATH || "");
-  const [isGenealogyMode, setIsGenealogyMode] = React.useState(false);
 
-  // NOW PASS MODELS INTO USETHREADS
   const {
     threads,
     currentThread,
@@ -55,7 +46,6 @@ const App = () => {
     METADATA_MODEL,
   );
 
-  // FINALLY SETUP THE CHAT SESSION
   const { send, isProcessing, inputText, setInputText } = useChatSession(
     currentThread,
     setCurrentThread,
@@ -89,8 +79,6 @@ const App = () => {
         vaultPath={vault.vaultPath}
         setVaultPath={vault.setVaultPath}
         setContextSnap={vault.snapRecentNotes}
-        isGenealogyMode={isGenealogyMode}
-        setIsGenealogyMode={setIsGenealogyMode}
         threads={threads}
         currentThreadId={currentThread.id}
         onSelectThread={switchThread}
@@ -133,46 +121,20 @@ const App = () => {
           )}
         </div>
 
-        {/* INPUT DOCK - Could be extracted to its own component if it grows */}
-        <div className="p-6 sm:p-10 bg-white border-t-2 border-saffron/10">
-          <div className="max-w-5xl mx-auto flex items-end space-x-6">
-            <div className="flex-grow relative">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) =>
-                  e.key === "Enter" &&
-                  !e.shiftKey &&
-                  send(inputText, {
-                    activeProviderId: models.activeProviderId,
-                    selectedModel: models.selectedModel,
-                    isGenealogyMode,
-                    contextSnap: vault.contextSnap,
-                    openRouterKey: OPENROUTER_KEY,
-                    ollamaBaseUrl: OLLAMA_URL,
-                  })
-                }
-                placeholder="Hello, Lyra..."
-                className="w-full p-6 bg-bright-snow border-2 border-graphite rounded-[2.5rem] text-lg font-bold outline-none focus:border-brilliant-rose h-32 resize-none"
-              />
-              <button
-                onClick={() =>
-                  send(inputText, {
-                    activeProviderId: models.activeProviderId,
-                    selectedModel: models.selectedModel,
-                    isGenealogyMode,
-                    contextSnap: vault.contextSnap,
-                    openRouterKey: OPENROUTER_KEY,
-                    ollamaBaseUrl: OLLAMA_URL,
-                  })
-                }
-                className="absolute right-6 bottom-6 bg-brilliant-rose text-white w-14 h-14 rounded-full shadow-lg"
-              >
-                ↑
-              </button>
-            </div>
-          </div>
-        </div>
+        <ChatInput
+          value={inputText}
+          onChange={setInputText}
+          isProcessing={isProcessing}
+          onSend={() =>
+            send(inputText, {
+              activeProviderId: models.activeProviderId,
+              selectedModel: models.selectedModel,
+              contextSnap: vault.contextSnap,
+              openRouterKey: OPENROUTER_KEY,
+              ollamaBaseUrl: OLLAMA_URL,
+            })
+          }
+        />
       </main>
     </div>
   );

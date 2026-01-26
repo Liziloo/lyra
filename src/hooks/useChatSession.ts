@@ -1,17 +1,9 @@
 // src/hooks/useChatSession.ts
+
 import { useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { sendMessage, generateThreadMetadata } from "../services/llmService";
-import { Thread, Message, Provider } from "../types";
-
-interface ChatSessionOptions {
-  activeProviderId: "ollama" | "openrouter";
-  selectedModel: string;
-  isGenealogyMode: boolean;
-  contextSnap: string;
-  openRouterKey: string;
-  ollamaBaseUrl: string;
-}
+import { Thread, Message, Provider, ChatSessionOptions } from "../types";
 
 export const useChatSession = (
   thread: Thread,
@@ -25,7 +17,6 @@ export const useChatSession = (
   const send = async (text: string, options: ChatSessionOptions) => {
     if (!text.trim() || isProcessing) return;
 
-    // 1. Setup Provider
     const provider: Provider = {
       id: options.activeProviderId,
       name: options.activeProviderId === "ollama" ? "Ollama" : "OpenRouter",
@@ -36,12 +27,6 @@ export const useChatSession = (
       apiKey:
         options.activeProviderId === "openrouter" ? options.openRouterKey : "",
     };
-
-    // 2. Build Injected Context
-    const systemOverride = `
-      ${options.isGenealogyMode ? "You are a genealogy expert. Cite sources." : "You are a helpful AI assistant."}
-      ${thread.brief ? `\n\nSITUATIONAL BRIEF (Previous Context): ${thread.brief}` : ""}
-    `.trim();
 
     const userMsg: Message = {
       id: uuidv4(),
@@ -58,9 +43,10 @@ export const useChatSession = (
       const aiResponse = await sendMessage(updatedMessages, {
         provider,
         model: options.selectedModel,
-        isGenealogyExpert: options.isGenealogyMode,
         contextNotes: options.contextSnap,
-        systemOverride, // Pass the briefed context here
+        systemOverride: thread.brief
+          ? `SITUATIONAL BRIEF: ${thread.brief}`
+          : undefined,
       });
 
       let finalThread: Thread = {
@@ -78,21 +64,16 @@ export const useChatSession = (
       };
 
       if (thread.messages.length === 0 && !thread.isCustomName) {
-        try {
-          const title = await generateThreadMetadata(
-            finalThread.messages,
-            {
-              provider,
-              model: metadataModel, // FORCE UTILITY MODEL
-              isGenealogyExpert: false,
-              contextNotes: "",
-            },
-            "title",
-          );
-          finalThread.summary = title;
-        } catch (e) {
-          finalThread.summary = text.substring(0, 30);
-        }
+        const title = await generateThreadMetadata(
+          finalThread.messages,
+          {
+            provider,
+            model: metadataModel,
+            contextNotes: "",
+          },
+          "title",
+        );
+        finalThread.summary = title;
       }
 
       onThreadUpdate(finalThread);

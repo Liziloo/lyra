@@ -1,6 +1,9 @@
+// src/components/sidebar/Sidebar.tsx
+
 import React from "react";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ControlCard } from "./ControlCard";
+import { ThreadArchive } from "./ThreadArchive";
 import { obsidianService } from "../../services/obsidianService";
 import { Thread } from "../../types";
 
@@ -17,8 +20,6 @@ interface SidebarProps {
   vaultPath: string;
   setVaultPath: (p: string) => void;
   setContextSnap: (s: string) => void;
-  isGenealogyMode: boolean;
-  setIsGenealogyMode: (b: boolean) => void;
   threads: Thread[];
   currentThreadId: string;
   onSelectThread: (id: string) => void;
@@ -34,7 +35,6 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
       style={{ width: props.width }}
       className="flex-shrink-0 border-r-4 border-graphite flex flex-col p-6 sm:p-8 bg-white z-20 shadow-xl overflow-y-auto custom-scrollbar"
     >
-      {/* HEADER SECTION */}
       <div className="mb-8 flex justify-between items-start">
         <div>
           <h1 className="text-4xl sm:text-5xl font-black italic tracking-tighter text-graphite">
@@ -46,83 +46,30 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         <button
           onClick={props.onNewChat}
           className="bg-graphite text-white p-3 rounded-xl hover:bg-brilliant-rose transition-colors shadow-lg flex items-center justify-center w-10 h-10"
-          title="New Chat"
         >
           <span className="text-2xl font-bold">+</span>
         </button>
       </div>
 
-      {/* HARDWARE STATUS */}
       <div className="mb-10">
         <StatusBadge isOnline={props.isOllamaOnline} label="Workstation" />
       </div>
 
       <div className="space-y-6 flex-grow">
-        {/* THREAD HISTORY SECTION */}
-        <ControlCard
-          title="Archives"
-          description={
-            props.isSummarizing ? "Auditing History..." : "Recent Transmissions"
-          }
-        >
-          <div className="max-h-64 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-            {props.threads.length === 0 && (
-              <p className="text-[10px] opacity-30 italic p-2">
-                Empty silence...
-              </p>
-            )}
-            {props.threads.map((t) => (
-              <div
-                key={t.id}
-                onClick={() => props.onSelectThread(t.id)}
-                className={`group p-3 rounded-xl border-2 transition-all cursor-pointer ${
-                  props.currentThreadId === t.id
-                    ? "border-brilliant-rose bg-brilliant-rose/5"
-                    : "border-transparent bg-bright-snow hover:border-saffron/30"
-                }`}
-              >
-                <input
-                  className="bg-transparent font-black text-[10px] uppercase w-full outline-none focus:text-brilliant-rose cursor-text truncate"
-                  value={t.summary || "New Transmission"}
-                  onChange={(e) => props.onRenameThread(t.id, e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <div className="flex justify-between items-center mt-1">
-                  <span className="text-[8px] opacity-40">
-                    {new Date(t.updatedAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}{" "}
-                    — {new Date(t.updatedAt).toLocaleDateString()}
-                  </span>
-                  <div className="flex items-center space-x-2">
-                    {t.brief && (
-                      <span className="text-[8px] text-saffron font-bold animate-pulse">
-                        ● BRIEFED
-                      </span>
-                    )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        props.onDeleteThread(t.id);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 text-brilliant-rose text-[10px] font-bold hover:scale-125 transition-all"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </ControlCard>
+        <ThreadArchive
+          threads={props.threads}
+          currentThreadId={props.currentThreadId}
+          isSummarizing={props.isSummarizing}
+          onSelectThread={props.onSelectThread}
+          onRenameThread={props.onRenameThread}
+          onDeleteThread={props.onDeleteThread}
+        />
 
-        {/* INTELLIGENCE MAPPING */}
         <ControlCard title="Intelligence" description="Hardware Mapping">
           <select
             value={props.activeProviderId}
             onChange={(e) => props.setActiveProviderId(e.target.value as any)}
-            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none focus:border-brilliant-rose transition-colors"
+            className="w-full py-2 bg-transparent border-b-2 border-saffron font-bold text-sm outline-none"
           >
             <option value="ollama">OLLAMA</option>
             <option value="openrouter">OPENROUTER</option>
@@ -135,9 +82,9 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
               className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
               disabled={!props.isOllamaOnline}
             >
-              {props.availableModels.map((model) => (
-                <option key={model} value={model}>
-                  {model}
+              {props.availableModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
                 </option>
               ))}
             </select>
@@ -152,21 +99,19 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           )}
         </ControlCard>
 
-        {/* CODING MODE RECURSIVE SCAN */}
         <ControlCard title="Coding Mode" description="Recursive Scan">
           <button
             onClick={props.handleScanCodebase}
             className={`w-full py-4 rounded-[2rem] border-2 font-black transition-all text-xs tracking-widest ${
               props.isCodingMode
-                ? "bg-brilliant-rose border-graphite text-white shadow-md"
-                : "border-brilliant-rose text-brilliant-rose hover:bg-brilliant-rose hover:text-white"
+                ? "bg-brilliant-rose text-white"
+                : "border-brilliant-rose text-brilliant-rose"
             }`}
           >
             {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
           </button>
         </ControlCard>
 
-        {/* OBSIDIAN VAULT CONTEXT */}
         <ControlCard title="Vault" description="Obsidian knowledge">
           <button
             onClick={() =>
@@ -184,7 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
                 await obsidianService.getRecentNotesContext(props.vaultPath),
               )
             }
-            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black hover:bg-brilliant-rose transition-colors uppercase tracking-widest shadow-md active:scale-95"
+            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black uppercase tracking-widest"
           >
             SNAP CONTEXT
           </button>
