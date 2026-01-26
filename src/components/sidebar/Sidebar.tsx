@@ -1,10 +1,8 @@
 // src/components/sidebar/Sidebar.tsx
-
 import React from "react";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ControlCard } from "./ControlCard";
 import { ThreadArchive } from "./ThreadArchive";
-import { obsidianService } from "../../services/obsidianService";
 import { Thread } from "../../types";
 
 interface SidebarProps {
@@ -17,9 +15,6 @@ interface SidebarProps {
   availableModels: string[];
   isCodingMode: boolean;
   handleScanCodebase: () => void;
-  vaultPath: string;
-  setVaultPath: (p: string) => void;
-  setContextSnap: (s: string) => void;
   threads: Thread[];
   currentThreadId: string;
   onSelectThread: (id: string) => void;
@@ -65,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           onDeleteThread={props.onDeleteThread}
         />
 
-        <ControlCard title="Intelligence" description="Hardware Mapping">
+        <ControlCard title="Intelligence" description="Lyra-Namespace Models">
           <select
             value={props.activeProviderId}
             onChange={(e) => props.setActiveProviderId(e.target.value as any)}
@@ -82,11 +77,15 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
               className="w-full mt-4 p-2 border-b-2 border-brilliant-rose bg-bright-snow font-bold text-xs outline-none"
               disabled={!props.isOllamaOnline}
             >
-              {props.availableModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              {props.availableModels.length > 0 ? (
+                props.availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))
+              ) : (
+                <option disabled>No lyra- models found</option>
+              )}
             </select>
           ) : (
             <input
@@ -109,29 +108,6 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             }`}
           >
             {props.isCodingMode ? "● PROJECT READY" : "SCAN PROJECT"}
-          </button>
-        </ControlCard>
-
-        <ControlCard title="Vault" description="Obsidian knowledge">
-          <button
-            onClick={() =>
-              obsidianService
-                .pickVaultFolder()
-                .then((p) => p && props.setVaultPath(p))
-            }
-            className="w-full text-left p-3 border-2 border-graphite/5 bg-bright-snow rounded-2xl text-[9px] truncate mb-2 italic"
-          >
-            {props.vaultPath || "MAP VAULT PATH..."}
-          </button>
-          <button
-            onClick={async () =>
-              props.setContextSnap(
-                await obsidianService.getRecentNotesContext(props.vaultPath),
-              )
-            }
-            className="w-full bg-graphite text-white text-xs py-3 rounded-full font-black uppercase tracking-widest"
-          >
-            SNAP CONTEXT
           </button>
         </ControlCard>
       </div>
